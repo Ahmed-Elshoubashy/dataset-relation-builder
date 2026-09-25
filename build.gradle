@@ -1,0 +1,49 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.dubsof'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+// Java 21. The code is deliberately written in plain Java 8-style syntax (no var, records,
+// switch expressions, text blocks or streams-heavy code) so it stays easy to read.
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+dependencies {
+    implementation 'org.xerial:sqlite-jdbc:3.46.1.3'                 // database
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2' // JSON
+    implementation 'org.apache.pdfbox:pdfbox:3.0.3'                  // PDF text + page rendering
+    implementation 'org.apache.poi:poi-ooxml:5.2.5'                  // docx / xlsx
+    implementation 'com.sun.mail:javax.mail:1.6.2'                   // .eml parsing
+    implementation 'com.anthropic:anthropic-java:2.34.0'             // Claude OCR / adjudicator
+    runtimeOnly 'org.apache.logging.log4j:log4j-to-slf4j:2.23.1'      // route POI logging to...
+    runtimeOnly 'org.slf4j:slf4j-nop:2.0.16'                          // ...nowhere
+
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+    mainClass = 'com.dubsof.Main'
+}
+
+run {
+    workingDir = rootDir
+    standardInput = System.in
+}
+
+test {
+    useJUnitPlatform()
+    workingDir = rootDir
+    testLogging { events 'failed'; exceptionFormat 'full' }
+}
