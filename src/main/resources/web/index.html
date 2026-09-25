@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entity Graph Explorer</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/layout-base@2.0.1/layout-base.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cose-base@2.2.0/cose-base.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-fcose@2.2.0/cytoscape-fcose.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="5" cy="6" r="2.6"/><circle cx="19" cy="6" r="2.6"/><circle cx="12" cy="18" r="2.6"/><path d="M7 7l3.8 8.6M17 7l-3.8 8.6M7.6 6h8.8" fill="none" stroke-width="1.6"/></svg>
+      <div>
+        <div class="brand-title">Entity Graph</div>
+        <div class="brand-sub" id="dataset-label">resolved entities &amp; relationships</div>
+      </div>
+    </div>
+    <div class="search">
+      <input id="search" type="search" placeholder="Search any name, alias, doc number…  ( / )" autocomplete="off">
+      <div id="search-results" class="search-results" hidden></div>
+    </div>
+    <div class="stats" id="stats"></div>
+    <button class="btn primary" id="btn-analyze" type="button">Analyse dataset</button>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <nav class="tabs" id="tabs"></nav>
+      <div class="list-filter"><input id="list-filter" type="search" placeholder="Filter…"></div>
+      <div class="list" id="list"></div>
+      <div class="list-footer" id="list-footer"></div>
+    </aside>
+
+    <section class="canvas-wrap">
+      <div class="toolbar">
+        <button id="btn-overview" class="btn" title="Every customer and its projects">Overview</button>
+        <div class="seg" role="group" aria-label="Depth">
+          <button class="seg-btn active" data-depth="1">1 hop</button>
+          <button class="seg-btn" data-depth="2">2 hops</button>
+        </div>
+        <label class="toggle"><input type="checkbox" id="chk-derived" checked> derived links</label>
+        <div class="legend" id="legend"></div>
+        <button id="btn-fit" class="btn icon" title="Fit to screen">⤢</button>
+      </div>
+      <div id="cy"></div>
+      <div class="hint" id="hint">Click a node for details · double-click to expand its neighbourhood · drag to rearrange</div>
+    </section>
+
+    <aside class="details" id="details">
+      <div class="empty">
+        <h3>Nothing selected</h3>
+        <p>Pick an entity from the list, the search box, or the graph to see who it is, what it's called across files, how it connects, and the evidence behind every link.</p>
+      </div>
+    </aside>
+  </main>
+
+  <dialog id="file-dialog">
+    <div class="dlg-head">
+      <div>
+        <div class="dlg-title" id="file-title"></div>
+        <div class="dlg-sub" id="file-sub"></div>
+      </div>
+      <div class="dlg-actions">
+        <a id="file-open" class="btn" target="_blank" rel="noopener">Open original</a>
+        <button class="btn" onclick="document.getElementById('file-dialog').close()">Close</button>
+      </div>
+    </div>
+    <div class="dlg-body">
+      <pre id="file-text"></pre>
+      <div class="dlg-side">
+        <h4>Extracted mentions</h4>
+        <div id="file-mentions"></div>
+        <div id="file-issues"></div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="analyze-dialog" class="analyze" aria-labelledby="an-title">
+    <form id="analyze-form" novalidate>
+      <div class="dlg-head">
+        <div>
+          <div class="dlg-title" id="an-title">Analyse a dataset</div>
+          <div class="dlg-sub">Builds a new graph from every file in a folder. The current graph stays available until the new one is ready.</div>
+        </div>
+        <div class="dlg-actions"><button type="button" class="btn" data-close>Close</button></div>
+      </div>
+
+      <div class="an-body" id="an-setup">
+        <div class="an-field">
+          <label class="an-label" for="an-path">Dataset folder</label>
+          <div class="an-path-row">
+            <input id="an-path" name="data_root" type="text" spellcheck="false" autocomplete="off" placeholder="/Users/you/Documents/dataset">
+            <button type="button" class="btn" id="an-browse" aria-expanded="false" aria-controls="an-browser">Browse…</button>
+          </div>
+          <div class="browser" id="an-browser" hidden>
+            <div class="browser-head">
+              <button type="button" class="btn" id="br-up" title="Parent folder">↑ Up</button>
+              <span class="browser-path" id="br-path"></span>
+            </div>
+            <div class="browser-list" id="br-list" role="listbox" aria-label="Folders"></div>
+            <div class="browser-foot">
+              <span id="br-count"></span>
+              <button type="button" class="btn primary" id="br-use">Use this folder</button>
+            </div>
+          </div>
+        </div>
+
+        <fieldset class="an-field">
+          <legend class="an-label">Scanned documents and screenshots</legend>
+          <div class="choices">
+            <label class="choice">
+              <input type="radio" name="ocr" value="none" id="ocr-none" checked>
+              <span class="c-title">Without OCR</span>
+              <span class="c-desc">Fastest. Image-only files are identified by their filename and folder.</span>
+            </label>
+            <label class="choice" id="choice-tess">
+              <input type="radio" name="ocr" value="tesseract" id="ocr-tesseract">
+              <span class="c-title">Local OCR (Tesseract)</span>
+              <span class="c-desc">Free and private: files stay on this machine. Table rows are read less reliably.</span>
+              <span class="c-warn" id="tess-missing" hidden>Not installed. Run <code>brew install tesseract</code>, then reopen this window.</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="ocr" value="claude" id="ocr-claude">
+              <span class="c-title">Claude</span>
+              <span class="c-desc">Most complete, including line items. Image-only files are sent to Anthropic and billed per page.</span>
+            </label>
+          </div>
+          <div class="an-key" id="an-key-wrap" hidden>
+            <label class="an-label" for="an-key">Anthropic API key</label>
+            <input id="an-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+            <p class="an-hint" id="an-key-hint">Used for this analysis only. It isn't saved to disk, the database or logs.</p>
+          </div>
+        </fieldset>
+        <p class="an-error" id="an-error" role="alert" hidden></p>
+      </div>
+
+      <div class="an-body" id="an-progress" hidden>
+        <ol class="steps" id="an-steps"></ol>
+        <p class="an-detail" id="an-detail" aria-live="polite"></p>
+        <pre class="an-log" id="an-log"></pre>
+      </div>
+
+      <div class="dlg-foot">
+        <span class="an-hint" id="an-foot"></span>
+        <button type="submit" class="btn primary" id="an-start">Analyse</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
