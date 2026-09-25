@@ -1,0 +1,23 @@
+services:
+  app:
+    build: .
+    image: entity-graph-resolver
+    ports:
+      # localhost only: the API has no login and accepts an Anthropic key.
+      # 8766 by default so it can run next to the Python version on 8765.
+      - "127.0.0.1:${PORT:-8766}:8765"
+    environment:
+      # the dataset picker browses this laptop folder (default: your home folder)
+      ERKG_BROWSE_ROOT: ${DATASETS_DIR:-${HOME}}
+      # folder pre-filled in the "Analyse dataset" dialog
+      ERKG_DATA_ROOT: ${DATASET:-${DATASETS_DIR:-${HOME}}}
+      # optional; otherwise enter the key in the "Analyse dataset" dialog
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      # mounted read-only at the SAME path it has on the laptop, so the picker shows real paths
+      - ${DATASETS_DIR:-${HOME}}:${DATASETS_DIR:-${HOME}}:ro
+      - graph-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  graph-data:
