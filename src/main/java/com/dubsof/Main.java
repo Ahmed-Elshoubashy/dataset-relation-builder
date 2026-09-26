@@ -43,11 +43,11 @@ public class Main {
             Connection conn = Db.open(Config.DB_FILE, false);
             try {
                 Db.init(conn);
-                Pipeline.loadOwner(conn);
                 if (command.equals("ocr")) {
                     TextStage.run(conn, ocr, null, Progress.CONSOLE);
                     Db.setMeta(conn, "ocr_backend", ocr);
                 }
+                Pipeline.detectOwner(conn, Progress.CONSOLE);
                 System.out.println("\nentities: " + Pipeline.graphStages(conn, Progress.CONSOLE));
             } finally {
                 conn.close();

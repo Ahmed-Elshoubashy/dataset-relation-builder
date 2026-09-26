@@ -94,7 +94,11 @@ public final class Pipeline {
         return entities;
     }
 
-    private static void detectOwner(Connection conn, Progress progress) throws Exception {
+    /**
+     * Sets the owner organisation from the files' text (letterheads, sender domains).
+     * Not stored: rebuild/ocr detect it again from the text already in the database.
+     */
+    public static void detectOwner(Connection conn, Progress progress) throws Exception {
         String[] detected = OwnerDetector.detect(conn);
         if (detected[0] != null) {
             Config.ownerName = detected[0];
@@ -104,20 +108,7 @@ public final class Pipeline {
         if (detected[1] != null) {
             Config.ownerDomain = detected[1];
         }
-        Db.setMeta(conn, "owner", Config.ownerName);
-        Db.setMeta(conn, "owner_domain", Config.ownerDomain);
         progress.update(2, "read", "Owner organisation: " + Config.ownerName);
-    }
-
-    /** Reloads the owner recorded with an existing graph (for rebuild/ocr on it). */
-    public static void loadOwner(Connection conn) throws Exception {
-        Map<String, String> meta = Db.meta(conn);
-        if (meta.containsKey("owner")) {
-            Config.ownerName = meta.get("owner");
-        }
-        if (meta.containsKey("owner_domain")) {
-            Config.ownerDomain = meta.get("owner_domain");
-        }
     }
 
     private static String seconds(long start) {
