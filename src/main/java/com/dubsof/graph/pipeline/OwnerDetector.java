@@ -17,6 +17,9 @@ import java.util.regex.Pattern;
  * Works out whose file share this is: the organisation printed at the top of most
  * generated PDFs (the letterhead) and the most common e-mail sender domain.
  */
+
+
+// TODO, revist this class again
 public final class OwnerDetector {
 
     private static final Pattern LEGAL = Pattern.compile("\\b(Ltd|Limited|Inc|LLC|plc|GmbH|Corp|Corporation|Company|Co\\.)", Pattern.CASE_INSENSITIVE);

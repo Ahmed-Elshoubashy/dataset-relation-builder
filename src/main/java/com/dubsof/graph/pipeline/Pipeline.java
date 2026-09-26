@@ -84,11 +84,14 @@ public final class Pipeline {
         progress.update(3, "extract", "Running");
         progress.update(3, "extract", "Done: " + Extractor.run(conn) + " in " + seconds(t));
         t = System.currentTimeMillis();
+        
         progress.update(4, "resolve", "Running");
         progress.update(4, "resolve", "Done: " + Resolver.run(conn) + " in " + seconds(t));
         t = System.currentTimeMillis();
+        
         progress.update(5, "relate", "Running");
         progress.update(5, "relate", "Done: " + Relator.run(conn) + " in " + seconds(t));
+        
         return entitiesDao.countsByType(conn);
     }
 

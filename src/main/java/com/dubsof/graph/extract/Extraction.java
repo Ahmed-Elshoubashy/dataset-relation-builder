@@ -19,7 +19,7 @@ public class Extraction {
         public final String surface;
         public final String role;
         public final double confidence;
-        public final Map<String, Object> attrs = new LinkedHashMap<String, Object>();
+        public final Map<String, Object> attrs = new LinkedHashMap<>();
 
         Mention(String etype, String surface, String role, double confidence) {
             this.etype = etype;
@@ -59,7 +59,8 @@ public class Extraction {
      *
      * @param attrs alternating key, value pairs; null values are skipped
      */
-    public Integer mc(String etype, String surface, String role, double confidence, Object... attrs) {
+    // TODO revisit this
+    public Integer addMentionWithConfidence(String etype, String surface, String role, double confidence, Object... attrs) {
         surface = stripChars(Text.collapseSpaces(surface), " ,;:");
         if (surface.isEmpty()) {
             return null;
@@ -88,8 +89,8 @@ public class Extraction {
     }
 
     /** Adds a mention with full confidence. */
-    public Integer m(String etype, String surface, String role, Object... attrs) {
-        return mc(etype, surface, role, 1.0, attrs);
+    public Integer addMention(String etype, String surface, String role, Object... attrs) {
+        return addMentionWithConfidence(etype, surface, role, 1.0, attrs);
     }
 
     public void fact(Integer src, String rel, Integer dst) {
