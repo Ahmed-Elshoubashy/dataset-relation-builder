@@ -86,7 +86,7 @@ public class TextStage {
                 filesDao.updateText(conn, row.id, text, TextSource.NATIVE, status);
                 
             } catch (NeedsOcr e) {
-                if (wantsOcr(row)) {
+                if (wantsOcr(row, data)) {
                     ocrQueue.add(row);
                     
                 } else {
@@ -180,7 +180,8 @@ public class TextStage {
         }
     }
 
-    private static boolean wantsOcr(FileRow row) {
+    /** Should this image-only file go to OCR? Not for photos, which carry no text (unless ERKG_OCR_PHOTOS=1). */
+    private static boolean wantsOcr(FileRow row, byte[] data) {
         String[] members = row.path.split(Pattern.quote("::"));
         String name = members[members.length - 1];
         name = name.substring(name.lastIndexOf('/') + 1);
@@ -190,8 +191,10 @@ public class TextStage {
         if (kind == FileKind.JPG && PHOTO_NAME.matcher(name).matches() && !Config.OCR_PHOTOS) {
             return false;
         }
-        // TODO remove the name.equals("site_photo.png") condition
-        if (name.equals("site_photo.png") && !Config.OCR_PHOTOS) {   // photos attached to emails
+        // decided from the pixels, not the file name: e.g. the "site_photo.png" e-mail attachments
+        // in john-doe are dashboard screenshots full of job codes and customer names
+        boolean isImage = kind == FileKind.PNG || kind == FileKind.JPG;
+        if (isImage && !Config.OCR_PHOTOS && !ImageClassifier.looksLikeScreenshot(data)) {
             return false;
         }
         return kind.isOcrable();

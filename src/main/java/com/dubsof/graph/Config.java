@@ -22,7 +22,7 @@ public final class Config {
     public static final int OCR_WORKERS = Integer.parseInt(env("ERKG_OCR_WORKERS", "8"));
     public static final String CLAUDE_MODEL = env("ERKG_CLAUDE_MODEL", "claude-opus-5");
 
-    /** Stock photos (IMG_*.jpg, MKT_*.jpg) carry no text; skip them unless asked. */
+    /** Photos carry no text, so they are not sent to OCR; set ERKG_OCR_PHOTOS=1 to send every image anyway. */
     public static final boolean OCR_PHOTOS = "1".equals(env("ERKG_OCR_PHOTOS", "0"));
 
     /** Who decides borderline company matches: "rules" or "claude". */
