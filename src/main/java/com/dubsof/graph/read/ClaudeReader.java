@@ -46,8 +46,8 @@ public class ClaudeReader implements TextReader {
         this.model = Config.CLAUDE_MODEL;
     }
 
-    public String name() {
-        return "claude";
+    public OcrBackend backend() {
+        return OcrBackend.CLAUDE;
     }
 
     public String read(byte[] data, FileKind kind, String filename) {

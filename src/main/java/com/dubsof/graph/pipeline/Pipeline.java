@@ -6,6 +6,7 @@ import com.dubsof.graph.dao.MetaDao;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.Extractor;
 import com.dubsof.graph.ingest.Ingestor;
+import com.dubsof.graph.read.OcrBackend;
 import com.dubsof.graph.read.TextStage;
 import com.dubsof.graph.relate.Relator;
 import com.dubsof.graph.resolve.Resolver;
@@ -44,7 +45,7 @@ public final class Pipeline {
      *
      * @param apiKey only used by the Claude OCR backend; never stored
      */
-    public static Result build(File dataRoot, File target, String ocr, String apiKey, Progress progress) throws Exception {
+    public static Result build(File dataRoot, File target, OcrBackend ocr, String apiKey, Progress progress) throws Exception {
         dataRoot = dataRoot.getCanonicalFile();
         File built = new File(target.getPath() + ".building");
         built.delete();
@@ -53,7 +54,7 @@ public final class Pipeline {
         try (Connection conn = Db.open(built, false)) {
             Db.init(conn);
             metaDao.set(conn, "data_root", dataRoot.getPath());
-            metaDao.set(conn, "ocr_backend", ocr);
+            metaDao.set(conn, "ocr_backend", ocr.value());
             metaDao.set(conn, "started_at", now());
 
             progress.update(1, "ingest", "Scanning " + dataRoot);

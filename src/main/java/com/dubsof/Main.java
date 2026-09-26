@@ -6,6 +6,7 @@ import com.dubsof.graph.dao.MetaDao;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.pipeline.Pipeline;
 import com.dubsof.graph.pipeline.Progress;
+import com.dubsof.graph.read.OcrBackend;
 import com.dubsof.graph.read.TextStage;
 
 import java.io.File;
@@ -27,12 +28,12 @@ public class Main {
     public static void main(String[] args) throws Exception {
         String command = args.length > 0 ? args[0] : "serve";
         File data = Config.dataRoot;
-        String ocr = Config.OCR_BACKEND;
+        OcrBackend ocr = Config.OCR_BACKEND;
         for (int i = 1; i + 1 < args.length; i += 2) {
             if (args[i].equals("--data")) {
                 data = new File(args[i + 1]);
             } else if (args[i].equals("--ocr")) {
-                ocr = args[i + 1];
+                ocr = OcrBackend.fromValue(args[i + 1]);
             }
         }
 
@@ -47,7 +48,7 @@ public class Main {
                 Db.init(conn);
                 if (command.equals("ocr")) {
                     TextStage.run(conn, ocr, null, Progress.CONSOLE);
-                    metaDao.set(conn, "ocr_backend", ocr);
+                    metaDao.set(conn, "ocr_backend", ocr.value());
                 }
                 Pipeline.detectOwner(conn, Progress.CONSOLE);
                 System.out.println("\nentities: " + Pipeline.graphStages(conn, Progress.CONSOLE));

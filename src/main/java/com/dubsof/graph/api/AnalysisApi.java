@@ -8,6 +8,7 @@ import com.anthropic.models.models.ModelListParams;
 import com.dubsof.graph.Config;
 import com.dubsof.graph.pipeline.Pipeline;
 import com.dubsof.graph.pipeline.Progress;
+import com.dubsof.graph.read.OcrBackend;
 import com.dubsof.graph.read.TesseractReader;
 
 import java.io.File;
@@ -157,13 +158,16 @@ public class AnalysisApi {
 
     public Map<String, Object> start(Map<?, ?> body) throws IOException {
         final File root = expandHome(body.get("data_root") == null ? "" : String.valueOf(body.get("data_root")));
-        final String backend = body.get("ocr") == null ? "none" : String.valueOf(body.get("ocr"));
+        String ocrOption = body.get("ocr") == null ? "none" : String.valueOf(body.get("ocr"));
+        final OcrBackend backend;
+        try {
+            backend = OcrBackend.fromValue(ocrOption);
+        } catch (IllegalArgumentException e) {
+            throw new ApiServer.ApiException(400, "Unknown OCR option: " + ocrOption);
+        }
         String typedKey = body.get("api_key") == null ? "" : String.valueOf(body.get("api_key")).trim();
         final String key = typedKey.isEmpty() ? null : typedKey;
 
-        if (!Arrays.asList("none", "tesseract", "claude").contains(backend)) {
-            throw new ApiServer.ApiException(400, "Unknown OCR option: " + backend);
-        }
         if (!insideRoot(root.getAbsoluteFile().getCanonicalFile())) {
             throw new ApiServer.ApiException(400, "Only folders inside " + Config.BROWSE_ROOT + " are shared with the app. "
                     + "Set DATASETS_DIR to a folder that contains " + root + " and restart.");
@@ -175,13 +179,13 @@ public class AnalysisApi {
         if (children == null || children.length == 0) {
             throw new ApiServer.ApiException(400, root + " is empty");
         }
-        if (backend.equals("claude")) {
+        if (backend == OcrBackend.CLAUDE) {
             if (key == null && Config.apiKeyFromEnv() == null) {
                 throw new ApiServer.ApiException(400, "Enter an Anthropic API key to use Claude.");
             }
             checkKey(key != null ? key : Config.apiKeyFromEnv());
         }
-        if (backend.equals("tesseract") && !TesseractReader.isInstalled()) {
+        if (backend == OcrBackend.TESSERACT && !TesseractReader.isInstalled()) {
             throw new ApiServer.ApiException(400, "Tesseract isn't installed. Install it with: brew install tesseract");
         }
 
@@ -198,7 +202,7 @@ public class AnalysisApi {
             finishedAt = null;
             log.clear();
             dataRoot = root.getCanonicalPath();
-            ocr = backend;
+            ocr = backend.value();
             startedAt = now();
         }
         Thread worker = new Thread(new Runnable() {
@@ -211,7 +215,7 @@ public class AnalysisApi {
         return status();
     }
 
-    private void runAnalysis(File root, String backend, String key) {
+    private void runAnalysis(File root, OcrBackend backend, String key) {
         Progress progress = new Progress() {
             public void update(int step, String stage, String detail) {
                 progress(step, stage, detail);

@@ -4,6 +4,7 @@ import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.ingest.FileStatus;
+import com.dubsof.graph.read.TextSource;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -75,8 +76,9 @@ public class FilesDao {
     }
 
     /** Files of one kind and status; {@code textSource} null means any source. */
-    public List<FileRow> findTexts(Connection conn, FileKind kind, FileStatus status, String textSource) throws SQLException {
-        return Db.list(conn, SELECT_TEXTS, FilesDao::map, kind.value(), status.value(), textSource, textSource);
+    public List<FileRow> findTexts(Connection conn, FileKind kind, FileStatus status, TextSource textSource) throws SQLException {
+        String source = textSource == null ? null : textSource.value();
+        return Db.list(conn, SELECT_TEXTS, FilesDao::map, kind.value(), status.value(), source, source);
     }
 
     public List<FileRow> findWithText(Connection conn, FileStatus status) throws SQLException {
@@ -92,8 +94,8 @@ public class FilesDao {
     }
 
     /** Stores the text read from a file, which source produced it, and the resulting status. */
-    public void updateText(Connection conn, long id, String text, String textSource, FileStatus status) throws SQLException {
-        Db.update(conn, UPDATE_TEXT, text, textSource, status.value(), id);
+    public void updateText(Connection conn, long id, String text, TextSource textSource, FileStatus status) throws SQLException {
+        Db.update(conn, UPDATE_TEXT, text, textSource.value(), status.value(), id);
     }
 
     /** Gives byte-identical copies their original's text and status (except skipped files). */
@@ -125,7 +127,7 @@ public class FilesDao {
         f.folderJob = rs.getString("folder_job");
         f.folderCategory = rs.getString("folder_category");
         f.status = FileStatus.fromValue(rs.getString("status"));
-        f.textSource = rs.getString("text_source");
+        f.textSource = TextSource.fromValue(rs.getString("text_source"));
         f.text = rs.getString("text");
         f.error = rs.getString("error");
         f.duplicateOf = Db.longOrNull(rs, "duplicate_of");

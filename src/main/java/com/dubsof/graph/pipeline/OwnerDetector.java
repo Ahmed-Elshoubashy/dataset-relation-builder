@@ -4,6 +4,7 @@ import com.dubsof.graph.dao.FilesDao;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.ingest.FileStatus;
+import com.dubsof.graph.read.TextSource;
 
 import java.sql.Connection;
 import java.util.HashMap;
@@ -30,7 +31,7 @@ public final class OwnerDetector {
     public static String[] detect(Connection conn) throws Exception {
         Map<String, Integer> heads = new LinkedHashMap<String, Integer>();
         int pdfs = 0;
-        for (FileRow f : filesDao.findTexts(conn, FileKind.PDF, FileStatus.OK, "native")) {
+        for (FileRow f : filesDao.findTexts(conn, FileKind.PDF, FileStatus.OK, TextSource.NATIVE)) {
             for (String line : f.text.split("\\r?\\n")) {
                 if (!line.trim().isEmpty()) {
                     count(heads, line.trim());

@@ -1,5 +1,8 @@
 package com.dubsof.graph;
 
+import com.dubsof.graph.read.OcrBackend;
+import com.dubsof.graph.resolve.AdjudicatorType;
+
 import java.io.File;
 
 /** Runtime configuration. Every value can be overridden with an environment variable. */
@@ -18,7 +21,7 @@ public final class Config {
     public static final File BLOB_DIR = new File(WORK_DIR, "blobs");
 
     /** Which TextReader handles image-only files: "claude", "tesseract" or "none". */
-    public static final String OCR_BACKEND = env("ERKG_OCR", apiKeyFromEnv() != null ? "claude" : "none");
+    public static final OcrBackend OCR_BACKEND = OcrBackend.fromValue(env("ERKG_OCR", apiKeyFromEnv() != null ? "claude" : "none"));
     public static final int OCR_WORKERS = Integer.parseInt(env("ERKG_OCR_WORKERS", "8"));
     public static final String CLAUDE_MODEL = env("ERKG_CLAUDE_MODEL", "claude-opus-5");
 
@@ -26,7 +29,7 @@ public final class Config {
     public static final boolean OCR_PHOTOS = "1".equals(env("ERKG_OCR_PHOTOS", "0"));
 
     /** Who decides borderline company matches: "rules" or "claude". */
-    public static final String ADJUDICATOR = env("ERKG_ADJUDICATOR", "rules");
+    public static final AdjudicatorType ADJUDICATOR = AdjudicatorType.fromValue(env("ERKG_ADJUDICATOR", "rules"));
 
     /** The organisation that owns the file share. Replaced by auto-detection during an analysis. */
     public static String ownerName = env("ERKG_OWNER", "Meridian Packaging Systems Ltd");

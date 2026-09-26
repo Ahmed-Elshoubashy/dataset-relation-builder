@@ -97,7 +97,7 @@ public class ClaudeAdjudicator implements Adjudicator {
 
     /** Claude when configured and a key is available, the rules otherwise. */
     public static Adjudicator createDefault() {
-        if ("claude".equals(Config.ADJUDICATOR) && Config.apiKeyFromEnv() != null) {
+        if (Config.ADJUDICATOR == AdjudicatorType.CLAUDE && Config.apiKeyFromEnv() != null) {
             try {
                 return new ClaudeAdjudicator();
             } catch (Exception e) {

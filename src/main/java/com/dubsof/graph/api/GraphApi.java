@@ -201,7 +201,7 @@ public class GraphApi {
         d.put("path", f.path);
         d.put("kind", f.kind.value());
         d.put("status", f.status.value());
-        d.put("text_source", f.textSource);
+        d.put("text_source", f.textSource == null ? null : f.textSource.value());
         d.put("size", f.size);
         d.put("error", f.error);
         d.put("text", f.text);

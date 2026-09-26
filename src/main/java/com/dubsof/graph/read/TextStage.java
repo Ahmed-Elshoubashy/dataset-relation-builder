@@ -57,34 +57,43 @@ public class TextStage {
     }
 
     /**
-     * @param ocrBackend "claude", "tesseract" or "none"
+     * @param ocrBackend which reader handles image-only files
      * @param apiKey     only for Claude; used for this run and never stored
      */
-    public static Map<String, Integer> run(Connection conn, String ocrBackend, String apiKey, Progress progress) throws Exception {
-        Map<String, Integer> stats = new LinkedHashMap<String, Integer>();
+    public static Map<String, Integer> run(Connection conn, OcrBackend ocrBackend, String apiKey, Progress progress) throws Exception {
+        Map<String, Integer> stats = new LinkedHashMap<>();
         for (String k : new String[] {"native", "ocr", "ocr_pending", "corrupt", "empty", "skipped_photos"}) {
             stats.put(k, 0);
         }
         List<FileRow> rows = filesDao.findOriginalsWithStatus(conn, FileStatus.NEW, FileStatus.NEEDS_OCR);
-        List<FileRow> ocrQueue = new ArrayList<FileRow>();
+        
+        List<FileRow> ocrQueue = new ArrayList<>();
+        
         for (FileRow row : rows) {
+            
             if (row.kind == FileKind.ZIP) {
                 filesDao.updateStatus(conn, row.id, FileStatus.CONTAINER);
                 continue;
             }
+            
             byte[] data = Files.readAllBytes(new File(row.blobPath).toPath());
+            
             try {
                 String text = Text.truncate(readNative(row.kind, data), Config.MAX_TEXT_CHARS);
                 FileStatus status = Text.isBlank(text) ? FileStatus.EMPTY : FileStatus.OK;
+                
                 increment(stats, status == FileStatus.OK ? "native" : "empty");
-                filesDao.updateText(conn, row.id, text, "native", status);
+                filesDao.updateText(conn, row.id, text, TextSource.NATIVE, status);
+                
             } catch (NeedsOcr e) {
                 if (wantsOcr(row)) {
                     ocrQueue.add(row);
+                    
                 } else {
                     increment(stats, "skipped_photos");
                     filesDao.updateStatus(conn, row.id, FileStatus.EMPTY);
                 }
+                
             } catch (Exception e) {   // unreadable, truncated or mislabelled files
                 increment(stats, "corrupt");
                 filesDao.updateStatus(conn, row.id, FileStatus.CORRUPT,
@@ -104,7 +113,7 @@ public class TextStage {
         return stats;
     }
 
-    private static void runOcr(Connection conn, List<FileRow> queue, String backend, String apiKey,
+    private static void runOcr(Connection conn, List<FileRow> queue, OcrBackend backend, String apiKey,
                                Progress progress, Map<String, Integer> stats) throws Exception {
         final CachedReader reader;
         try {
@@ -113,6 +122,7 @@ public class TextStage {
                 throw new ReaderUnavailableException("OCR is switched off");
             }
             reader = new CachedReader(inner);
+            
         } catch (ReaderUnavailableException e) {
             progress.update(2, "read", "OCR unavailable (" + e.getMessage() + "); " + queue.size() + " image-only files left unread");
             for (FileRow row : queue) {
@@ -121,38 +131,47 @@ public class TextStage {
             Db.commit(conn);
             return;
         }
-        progress.update(2, "read", "OCR via " + reader.name() + ": " + queue.size() + " files");
+        
+        progress.update(2, "read", "OCR via " + reader.backend().value() + ": " + queue.size() + " files");
+        
         ExecutorService pool = Executors.newFixedThreadPool(Config.OCR_WORKERS);
         try {
-            CompletionService<String[]> done = new ExecutorCompletionService<String[]>(pool);
+            CompletionService<String[]> done = new ExecutorCompletionService<>(pool);
+            
             for (final FileRow row : queue) {
-                done.submit(new Callable<String[]>() {
-                    /** Returns {file id, text, error}: exactly one of text / error is set. */
+                done.submit(new Callable<>() {
+                    /**
+                     * Returns {file id, text, error}: exactly one of text / error is set.
+                     */
                     public String[] call() {
                         String id = String.valueOf(row.id);
                         try {
                             byte[] data = Files.readAllBytes(new File(row.blobPath).toPath());
                             String text = reader.readWithHash(row.sha256, data, row.kind, row.path);
-                            return new String[] {id, text, null};
+                            return new String[] { id, text, null };
+                            
                         } catch (Exception e) {
-                            return new String[] {id, null, "OCR failed: " + e.getMessage()};
+                            return new String[] { id, null, "OCR failed: " + e.getMessage() };
                         }
                     }
                 });
             }
+            
             // results are written from this thread only: SQLite likes a single writer
             for (int i = 1; i <= queue.size(); i++) {
                 String[] r = done.take().get();
+                
                 if (r[2] == null) {
-                    filesDao.updateText(conn, Long.parseLong(r[0]), r[1], reader.name(),
+                    filesDao.updateText(conn, Long.parseLong(r[0]), r[1], reader.backend().textSource(),
                             Text.isBlank(r[1]) ? FileStatus.EMPTY : FileStatus.OK);
                     increment(stats, "ocr");
+                    
                 } else {   // stays waiting for the next OCR run
                     filesDao.updateStatus(conn, Long.parseLong(r[0]), FileStatus.NEEDS_OCR, Text.truncate(r[2], 500));
                 }
                 if (i % 5 == 0 || i == queue.size()) {
                     Db.commit(conn);
-                    progress.update(2, "read", "OCR via " + reader.name() + ": " + i + "/" + queue.size() + " files");
+                    progress.update(2, "read", "OCR via " + reader.backend().value() + ": " + i + "/" + queue.size() + " files");
                 }
             }
         } finally {
@@ -166,9 +185,12 @@ public class TextStage {
         String name = members[members.length - 1];
         name = name.substring(name.lastIndexOf('/') + 1);
         FileKind kind = row.kind;
+        
+        // TODO check this condition
         if (kind == FileKind.JPG && PHOTO_NAME.matcher(name).matches() && !Config.OCR_PHOTOS) {
             return false;
         }
+        // TODO remove the name.equals("site_photo.png") condition
         if (name.equals("site_photo.png") && !Config.OCR_PHOTOS) {   // photos attached to emails
             return false;
         }
@@ -250,7 +272,7 @@ public class TextStage {
             }
             for (XWPFTable table : doc.getTables()) {
                 for (XWPFTableRow row : table.getRows()) {
-                    List<String> cells = new ArrayList<String>();
+                    List<String> cells = new ArrayList<>();
                     for (XWPFTableCell cell : row.getTableCells()) {
                         cells.add(cell.getText());
                     }

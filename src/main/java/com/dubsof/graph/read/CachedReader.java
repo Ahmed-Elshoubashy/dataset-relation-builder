@@ -25,8 +25,8 @@ public class CachedReader implements TextReader {
         ocrCacheDao.createTable(cache);
     }
 
-    public String name() {
-        return inner.name();
+    public OcrBackend backend() {
+        return inner.backend();
     }
 
     public String read(byte[] data, FileKind kind, String filename) throws Exception {
@@ -40,14 +40,14 @@ public class CachedReader implements TextReader {
         }
         String text = inner.read(data, kind, filename);
         synchronized (cache) {
-            ocrCacheDao.save(cache, sha, inner.name(), text);
+            ocrCacheDao.save(cache, sha, inner.backend().value(), text);
         }
         return text;
     }
 
     private String cached(String sha) throws SQLException {
         synchronized (cache) {
-            return ocrCacheDao.findText(cache, sha, inner.name());
+            return ocrCacheDao.findText(cache, sha, inner.backend().value());
         }
     }
 

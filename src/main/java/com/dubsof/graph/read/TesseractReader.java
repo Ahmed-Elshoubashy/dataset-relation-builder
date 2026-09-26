@@ -36,8 +36,8 @@ public class TesseractReader implements TextReader {
         }
     }
 
-    public String name() {
-        return "tesseract";
+    public OcrBackend backend() {
+        return OcrBackend.TESSERACT;
     }
 
     public String read(byte[] data, FileKind kind, String filename) throws Exception {

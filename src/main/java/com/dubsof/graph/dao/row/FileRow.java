@@ -2,6 +2,7 @@ package com.dubsof.graph.dao.row;
 
 import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.ingest.FileStatus;
+import com.dubsof.graph.read.TextSource;
 
 /** One row of the {@code files} table: a file, zip member or e-mail attachment. */
 public class FileRow {
@@ -21,8 +22,8 @@ public class FileRow {
     public String folderJob;
     public String folderCategory;
     public FileStatus status;
-    /** "native", "claude", "tesseract", or null while unread. */
-    public String textSource;
+    /** How the text was read, or null while unread. */
+    public TextSource textSource;
     public String text;
     public String error;
     /** The first byte-identical copy, or null. */

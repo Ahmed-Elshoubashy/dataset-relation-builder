@@ -11,8 +11,8 @@ import com.dubsof.graph.ingest.FileKind;
  */
 public interface TextReader {
 
-    /** Short name, stored with each transcription ("claude", "tesseract", "none"). */
-    String name();
+    /** Which backend this is; its value is stored with each transcription. */
+    OcrBackend backend();
 
     /** Text of an image-only file. {@code kind} is PDF, PNG or JPG (see {@link FileKind#isOcrable()}). */
     String read(byte[] data, FileKind kind, String filename) throws Exception;
