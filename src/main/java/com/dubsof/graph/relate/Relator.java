@@ -21,26 +21,38 @@ import com.dubsof.graph.resolve.NameMatcher;
 
 import java.sql.Connection;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Stage 5: lift mention-level facts to entity-level relations (with the files that prove them),
- * add derived shortcut relations, and run cross-document consistency checks.
+ * Stage 5: build the graph the explorer draws.
+ *
+ * After resolve, every mention points to an entity, but the links are still facts between
+ * mentions inside single files. This stage turns them into relations between entities:
+ * <ol>
+ *   <li>facts become relations, each with the files that state it (its evidence);</li>
+ *   <li>the gazetteer links documents to known names found in their free text;</li>
+ *   <li>derived shortcut relations are added (person INVOLVED_IN project, ...);</li>
+ *   <li>documents linked to nothing are removed;</li>
+ *   <li>documents that are referenced but have no file are marked missing.</li>
+ * </ol>
+ * The relations table is rebuilt from scratch on every run.
  */
 public class Relator {
 
-    /** Shortest alias the gazetteer searches for in free text (shorter ones match too much). */
+    /** Shortest alias the gazetteer searches for in free text (shorter names match too much). */
     private static final int MIN_GAZETTEER_ALIAS = 6;
+    /** Confidence of a name found in free text, lower than any template field. */
+    private static final double GAZETTEER_CONFIDENCE = 0.6;
 
     private final RelationsDao relationsDao = new RelationsDao();
     private final FactsDao factsDao = new FactsDao();
@@ -51,6 +63,58 @@ public class Relator {
 
     private final Connection conn;
 
+    /** One link between two entities: "src REL dst". Used as a map key, so it has equals/hashCode. */
+    private static class EntityLink {
+        final long srcEntityId;
+        final long dstEntityId;
+        final RelationType rel;
+
+        EntityLink(long srcEntityId, long dstEntityId, RelationType rel) {
+            this.srcEntityId = srcEntityId;
+            this.dstEntityId = dstEntityId;
+            this.rel = rel;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof EntityLink)) {
+                return false;
+            }
+            EntityLink that = (EntityLink) other;
+            return srcEntityId == that.srcEntityId && dstEntityId == that.dstEntityId && rel == that.rel;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(srcEntityId, dstEntityId, rel);
+        }
+    }
+
+    /** The entity a known name refers to. Kept in sets, so it has equals/hashCode. */
+    private static class NamedEntity {
+        final long entityId;
+        final EntityType type;
+
+        NamedEntity(long entityId, EntityType type) {
+            this.entityId = entityId;
+            this.type = type;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof NamedEntity)) {
+                return false;
+            }
+            NamedEntity that = (NamedEntity) other;
+            return entityId == that.entityId && type == that.type;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(entityId, type);
+        }
+    }
+
     public Relator(Connection conn) {
         this.conn = conn;
     }
@@ -59,126 +123,173 @@ public class Relator {
         return new Relator(conn).relate();
     }
 
+    /** Runs the five steps and returns the stage's summary (relations, gazetteer mentions, pruned documents). */
     public Map<String, Integer> relate() throws Exception {
         relationsDao.deleteAll(conn);
-        // group facts by (src entity, dst entity, rel), remembering every file that states them
-        Map<String, Set<Long>> grouped = new LinkedHashMap<String, Set<Long>>();
-        for (EntityFactRow f : factsDao.findBetweenEntities(conn)) {
-            String k = f.srcEntityId + "|" + f.dstEntityId + "|" + f.rel.value();
-            if (!grouped.containsKey(k)) {
-                grouped.put(k, new TreeSet<Long>());
-            }
-            grouped.get(k).add(f.fileId);
-        }
-        for (Map.Entry<String, Set<Long>> e : grouped.entrySet()) {
-            String[] p = e.getKey().split("\\|");
-            upsert(Long.parseLong(p[0]), Long.parseLong(p[1]), RelationType.fromValue(p[2]), e.getValue());
-        }
-        int gazetteer = gazetteer();
+        createRelationsFromFacts();
+        int gazetteerMentions = linkNamesInFreeText();
         relationsDao.deriveShortcuts(conn);
-        int pruned = pruneOrphans();
+        int prunedDocuments = pruneOrphanDocuments();
         markMissingDocuments();
         Db.commit(conn);
-        Map<String, Integer> stats = new LinkedHashMap<String, Integer>();
-        stats.put("relations", (int) relationsDao.count(conn));
-        stats.put("gazetteer_mentions", gazetteer);
-        stats.put("orphan_documents_pruned", pruned);
-        return stats;
+
+        Map<String, Integer> summary = new LinkedHashMap<>();
+        summary.put("relations", (int) relationsDao.count(conn));
+        summary.put("gazetteer_mentions", gazetteerMentions);
+        summary.put("orphan_documents_pruned", prunedDocuments);
+        return summary;
     }
 
-    /** Adds one relation (weight = number of files) and its evidence files. */
-    private void upsert(long src, long dst, RelationType rel, Set<Long> fileIds) throws Exception {
-        if (src == dst) {
-            return;
-        }
-        long id = relationsDao.upsert(conn, src, dst, rel, Math.max(fileIds.size(), 1));
-        for (Long f : fileIds) {
-            relationsDao.addEvidence(conn, id, f);
-        }
-    }
+    // ================================================================ 1. facts -> relations
 
     /**
-     * Finds company/person names in free text the template parsers did not understand
-     * (notes, e-mail bodies, letters), using every alias learned during resolution.
+     * Turns every fact whose two mentions are resolved into a relation between their entities.
+     * The same link stated in several files (or twice in one file, e.g. ISSUED_TO the bill-to company and
+     * ISSUED_TO the filename company, both Acme) becomes one relation; its files are its evidence.
      */
-    private int gazetteer() throws Exception {
-        Map<String, Set<String>> names = new HashMap<String, Set<String>>();   // alias -> {"id|etype"}
-        // the owner's letterhead is on everything, so the owner is left out
-        for (AliasRow a : aliasesDao.findSearchable(conn, MIN_GAZETTEER_ALIAS, NameMatcher.companyKey(Config.ownerName))) {
-            if (!names.containsKey(a.alias)) {
-                names.put(a.alias, new HashSet<String>());
+    private void createRelationsFromFacts() throws Exception {
+        // link -> files that state it, in the order the links are first seen
+        Map<EntityLink, Set<Long>> filesOfLink = new LinkedHashMap<>();
+        for (EntityFactRow fact : factsDao.findBetweenEntities(conn)) {
+            EntityLink link = new EntityLink(fact.srcEntityId, fact.dstEntityId, fact.rel);
+            if (!filesOfLink.containsKey(link)) {
+                filesOfLink.put(link, new TreeSet<>());
             }
-            names.get(a.alias).add(a.entityId + "|" + a.entityType.value());
+            filesOfLink.get(link).add(fact.fileId);
         }
-        final Map<String, String> unique = new HashMap<String, String>();
-        for (Map.Entry<String, Set<String>> e : names.entrySet()) {
-            if (e.getValue().size() == 1) {
-                unique.put(e.getKey(), e.getValue().iterator().next());
-            }
+        for (Map.Entry<EntityLink, Set<Long>> entry : filesOfLink.entrySet()) {
+            EntityLink link = entry.getKey();
+            saveRelation(link.srcEntityId, link.dstEntityId, link.rel, entry.getValue());
         }
-        if (unique.isEmpty()) {
+    }
+
+    /** Saves one relation (weight = number of files) and one evidence row per file. Self-links are skipped. */
+    private void saveRelation(long srcEntityId, long dstEntityId, RelationType rel, Set<Long> fileIds) throws Exception {
+        if (srcEntityId == dstEntityId) {
+            return;
+        }
+        long relationId = relationsDao.upsert(conn, srcEntityId, dstEntityId, rel, Math.max(fileIds.size(), 1));
+        for (Long fileId : fileIds) {
+            relationsDao.addEvidence(conn, relationId, fileId);
+        }
+    }
+
+    // ================================================================ 2. gazetteer
+
+    /**
+     * Finds company and person names in free text that no template parser understood
+     * (notes, e-mail bodies, letters), using every spelling learned during resolve.
+     * Each new name found adds a mention (role text_mention) and a relation "document MENTIONS entity".
+     *
+     * @return how many names were added
+     */
+    private int linkNamesInFreeText() throws Exception {
+        Map<String, NamedEntity> entityByName = searchableNames();
+        if (entityByName.isEmpty()) {
             return 0;
         }
-        List<String> sorted = new ArrayList<String>(unique.keySet());
-        Collections.sort(sorted, new Comparator<String>() {   // longest names first, so they win over their prefixes
-            public int compare(String a, String b) {
-                return b.length() - a.length();
-            }
-        });
-        StringBuilder alternatives = new StringBuilder();
-        for (String n : sorted) {
-            alternatives.append(alternatives.length() == 0 ? "" : "|").append(Pattern.quote(n));
-        }
-        Pattern pattern = Pattern.compile("\\b(" + alternatives + ")\\b");
+        Pattern anyKnownName = namePattern(entityByName.keySet());
 
-        Map<Long, Long> docOfFile = new HashMap<Long, Long>();
-        for (MentionRow m : mentionsDao.findResolvedWithRole(conn, MentionRole.SELF)) {
-            docOfFile.put(m.fileId, m.entityId);
+        // file id -> the file's own document entity (only files that are a document can MENTION something)
+        Map<Long, Long> documentOfFile = new HashMap<>();
+        for (MentionRow mention : mentionsDao.findResolvedWithRole(conn, MentionRole.SELF)) {
+            documentOfFile.put(mention.fileId, mention.entityId);
         }
-        Map<Long, Set<Long>> linked = new HashMap<Long, Set<Long>>();
-        for (MentionRow m : mentionsDao.findResolved(conn)) {
-            if (!linked.containsKey(m.fileId)) {
-                linked.put(m.fileId, new HashSet<Long>());
+        // file id -> entities the file is already linked to (a name found again adds nothing)
+        Map<Long, Set<Long>> entitiesOfFile = new HashMap<>();
+        for (MentionRow mention : mentionsDao.findResolved(conn)) {
+            if (!entitiesOfFile.containsKey(mention.fileId)) {
+                entitiesOfFile.put(mention.fileId, new HashSet<>());
             }
-            linked.get(m.fileId).add(m.entityId);
+            entitiesOfFile.get(mention.fileId).add(mention.entityId);
         }
+
         int added = 0;
-        for (FileRow f : filesDao.findWithText(conn, FileStatus.OK)) {
-            Long doc = docOfFile.get(f.id);
-            if (doc == null) {
+        for (FileRow file : filesDao.findWithText(conn, FileStatus.OK)) {
+            Long documentId = documentOfFile.get(file.id);
+            if (documentId == null) {
                 continue;
             }
-            Set<String> found = new TreeSet<String>();
-            Matcher m = pattern.matcher(f.text);
-            while (m.find()) {
-                found.add(m.group(1));
+            // every known name in the text, each once, in alphabetical order
+            Set<String> namesFound = new TreeSet<>();
+            Matcher matcher = anyKnownName.matcher(file.text);
+            while (matcher.find()) {
+                namesFound.add(matcher.group(1));
             }
-            for (String name : found) {
-                String[] target = unique.get(name).split("\\|");
-                long entity = Long.parseLong(target[0]);
-                Set<Long> here = linked.containsKey(f.id) ? linked.get(f.id) : new HashSet<Long>();
-                if (here.contains(entity)) {
+
+            Set<Long> alreadyLinked = entitiesOfFile.containsKey(file.id) ? entitiesOfFile.get(file.id) : new HashSet<>();
+            for (String name : namesFound) {
+                NamedEntity named = entityByName.get(name);
+                if (alreadyLinked.contains(named.entityId)) {
                     continue;
                 }
-                mentionsDao.insertResolved(conn, f.id, EntityType.fromValue(target[1]), name, MentionRole.TEXT_MENTION, entity, "gazetteer", 0.6);
-                Set<Long> one = new TreeSet<Long>();
-                one.add(f.id);
-                upsert(doc, entity, RelationType.MENTIONS, one);
-                here.add(entity);
-                linked.put(f.id, here);
+                mentionsDao.insertResolved(conn, file.id, named.type, name, MentionRole.TEXT_MENTION,
+                        named.entityId, "gazetteer", GAZETTEER_CONFIDENCE);
+                Set<Long> thisFile = new TreeSet<>();
+                thisFile.add(file.id);
+                saveRelation(documentId, named.entityId, RelationType.MENTIONS, thisFile);
+                alreadyLinked.add(named.entityId);
+                entitiesOfFile.put(file.id, alreadyLinked);
                 added++;
             }
         }
         return added;
     }
 
-    /** Drops file documents that connect to nothing (stock photos, blank notes). */
-    private int pruneOrphans() throws Exception {
+    /**
+     * Names worth searching for: every spelling of a company or person, at least MIN_GAZETTEER_ALIAS long.
+     * Left out: the owner (its name is on every letterhead) and names shared by two entities
+     * (it would be unclear which one is meant).
+     */
+    private Map<String, NamedEntity> searchableNames() throws Exception {
+        Map<String, Set<NamedEntity>> entitiesByName = new HashMap<>();
+        String ownerKey = NameMatcher.companyKey(Config.ownerName);
+        for (AliasRow alias : aliasesDao.findSearchable(conn, MIN_GAZETTEER_ALIAS, ownerKey)) {
+            if (!entitiesByName.containsKey(alias.alias)) {
+                entitiesByName.put(alias.alias, new HashSet<>());
+            }
+            entitiesByName.get(alias.alias).add(new NamedEntity(alias.entityId, alias.entityType));
+        }
+        Map<String, NamedEntity> unambiguous = new HashMap<>();
+        for (Map.Entry<String, Set<NamedEntity>> entry : entitiesByName.entrySet()) {
+            if (entry.getValue().size() == 1) {
+                unambiguous.put(entry.getKey(), entry.getValue().iterator().next());
+            }
+        }
+        return unambiguous;
+    }
+
+    /**
+     * One regular expression that matches any of the names as whole words: \b(name1|name2|...)\b.
+     * Longest names first, so "Falcon Aerospace Components" wins over "Falcon Aerospace".
+     */
+    private static Pattern namePattern(Set<String> names) {
+        List<String> longestFirst = new ArrayList<>(names);
+        longestFirst.sort(Comparator.comparingInt(String::length).reversed());
+        StringBuilder alternatives = new StringBuilder();
+        for (String name : longestFirst) {
+            if (alternatives.length() > 0) {
+                alternatives.append('|');
+            }
+            alternatives.append(Pattern.quote(name));
+        }
+        return Pattern.compile("\\b(" + alternatives + ")\\b");
+    }
+
+    // ================================================================ 4. and 5. clean-up
+
+    /**
+     * Removes documents that are linked to nothing (stock photos, blank notes): their mentions
+     * are unlinked (method "orphan"), their aliases deleted, then the entity itself.
+     *
+     * @return how many documents were removed
+     */
+    private int pruneOrphanDocuments() throws Exception {
         List<EntityRow> orphans = entitiesDao.findUnlinkedOfType(conn, EntityType.DOCUMENT);
-        for (EntityRow e : orphans) {
-            mentionsDao.unlinkEntity(conn, e.id, "orphan");
-            aliasesDao.deleteByEntity(conn, e.id);
-            entitiesDao.delete(conn, e.id);
+        for (EntityRow orphan : orphans) {
+            mentionsDao.unlinkEntity(conn, orphan.id, "orphan");
+            aliasesDao.deleteByEntity(conn, orphan.id);
+            entitiesDao.delete(conn, orphan.id);
         }
         return orphans.size();
     }
