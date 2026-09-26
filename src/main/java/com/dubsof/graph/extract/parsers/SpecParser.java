@@ -1,6 +1,7 @@
 package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 
 import java.util.regex.Matcher;
@@ -22,7 +23,7 @@ public class SpecParser implements Parser {
         String key = no.find() ? no.group(1) : null;
         String titleCode = head.group(1);
         Integer doc = document(ex, row, docType, key, titleCode + " " + head.group(2) + (key != null ? " (" + key + ")" : ""));
-        ex.fact(doc, "DESCRIBES", ex.addMention("product", titleCode, "spec_title", "code", titleCode));
+        ex.fact(doc, "DESCRIBES", ex.addMention(EntityType.PRODUCT, titleCode, "spec_title", "code", titleCode));
         if (model.find() && !model.group(1).equals(titleCode)) {
             ex.issue("conflict", "info", "titled " + titleCode + " but body says Model: " + model.group(1));
         }

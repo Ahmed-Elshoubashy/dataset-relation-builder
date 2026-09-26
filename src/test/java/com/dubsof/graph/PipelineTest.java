@@ -3,6 +3,7 @@ package com.dubsof.graph;
 import com.dubsof.graph.dao.EntitiesDao;
 import com.dubsof.graph.dao.row.EntityRow;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.extract.EntityType;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -71,7 +72,7 @@ class PipelineTest {
 
     @Test
     void versionsCollapseIntoOneDocument() throws Exception {
-        EntityRow quote = new EntitiesDao().findByTypeAndKey(conn, "document", "QUO-5238");
+        EntityRow quote = new EntitiesDao().findByTypeAndKey(conn, EntityType.DOCUMENT, "QUO-5238");
         assertNotNull(quote);
         assertTrue(((List<?>) quote.attrs.get("files")).size() >= 3);
     }

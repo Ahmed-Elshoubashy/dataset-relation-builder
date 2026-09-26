@@ -2,6 +2,7 @@ package com.dubsof.graph.dao;
 
 import com.dubsof.graph.dao.row.MentionRow;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.util.Json;
 
 import java.sql.Connection;
@@ -30,15 +31,15 @@ public class MentionsDao {
             "SELECT etype || ':' || method, COUNT(*) FROM mentions WHERE method IS NOT NULL GROUP BY 1";
 
     /** Adds an unresolved mention (attributes are set afterwards, once all ids of the file are known). */
-    public long insert(Connection conn, long fileId, String etype, String surface, String role, double confidence)
+    public long insert(Connection conn, long fileId, EntityType etype, String surface, String role, double confidence)
             throws SQLException {
-        return Db.insert(conn, INSERT, fileId, etype, surface, role, confidence);
+        return Db.insert(conn, INSERT, fileId, etype.value(), surface, role, confidence);
     }
 
     /** Adds a mention that is already linked to its entity. */
-    public long insertResolved(Connection conn, long fileId, String etype, String surface, String role,
+    public long insertResolved(Connection conn, long fileId, EntityType etype, String surface, String role,
                                long entityId, String method, double confidence) throws SQLException {
-        return Db.insert(conn, INSERT_RESOLVED, fileId, etype, surface, role, entityId, method, confidence);
+        return Db.insert(conn, INSERT_RESOLVED, fileId, etype.value(), surface, role, entityId, method, confidence);
     }
 
     public void updateAttrs(Connection conn, long id, Map<String, Object> attrs) throws SQLException {
@@ -80,7 +81,7 @@ public class MentionsDao {
         MentionRow m = new MentionRow();
         m.id = rs.getLong("id");
         m.fileId = rs.getLong("file_id");
-        m.etype = rs.getString("etype");
+        m.etype = EntityType.fromValue(rs.getString("etype"));
         m.surface = rs.getString("surface");
         m.role = rs.getString("role");
         m.attrs = Json.readMap(rs.getString("attrs"));

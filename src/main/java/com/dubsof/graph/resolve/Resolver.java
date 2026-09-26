@@ -12,6 +12,7 @@ import com.dubsof.graph.dao.row.FactRow;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.dao.row.MentionRow;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.resolve.NameMatcher.Match;
 import com.dubsof.graph.util.Text;
 
@@ -96,7 +97,7 @@ public class Resolver {
     // ================================================================ helpers
 
     /** Finds or creates an entity; new attrs are merged into existing ones. */
-    private long entity(String etype, String key, String name, Map<String, Object> attrs) throws Exception {
+    private long entity(EntityType etype, String key, String name, Map<String, Object> attrs) throws Exception {
         EntityRow row = entitiesDao.findByTypeAndKey(conn, etype, key);
         if (row != null) {
             if (attrs != null && !attrs.isEmpty()) {
@@ -133,7 +134,7 @@ public class Resolver {
         m.entityId = entityId;
         m.method = method;
         m.confidence = confidence;
-        String k = m.etype + ":" + method;
+        String k = m.etype.value() + ":" + method;
         stats.put(k, stats.containsKey(k) ? stats.get(k) + 1 : 1);
     }
 
@@ -141,10 +142,10 @@ public class Resolver {
         issuesDao.insert(conn, kind, severity, detail, fileId, entityId);
     }
 
-    private List<MentionRow> byType(String etype) {
+    private List<MentionRow> byType(EntityType etype) {
         List<MentionRow> out = new ArrayList<MentionRow>();
         for (MentionRow m : mentions.values()) {
-            if (m.etype.equals(etype)) {
+            if (m.etype == etype) {
                 out.add(m);
             }
         }
@@ -168,19 +169,19 @@ public class Resolver {
 
     private void companies() throws Exception {
         Map<Long, String> entities = new LinkedHashMap<Long, String>();   // id -> canonical name
-        owner = entity("company", NameMatcher.companyKey(Config.ownerName), Config.ownerName,
+        owner = entity(EntityType.COMPANY, NameMatcher.companyKey(Config.ownerName), Config.ownerName,
                 attrs("role", "owner", "domain", Config.ownerDomain));
         entities.put(owner, Config.ownerName);
         anchors.add(owner);
         // Customer folder names are the anchors.
-        for (MentionRow m : byType("company")) {
+        for (MentionRow m : byType(EntityType.COMPANY)) {
             if (m.role.equals("folder")) {
-                long id = entity("company", NameMatcher.companyKey(m.surface), m.surface, attrs("role", "customer"));
+                long id = entity(EntityType.COMPANY, NameMatcher.companyKey(m.surface), m.surface, attrs("role", "customer"));
                 entities.put(id, m.surface);
                 anchors.add(id);
             }
         }
-        List<MentionRow> pending = byType("company");
+        List<MentionRow> pending = byType(EntityType.COMPANY);
         Collections.sort(pending, new Comparator<MentionRow>() {
             public int compare(MentionRow a, MentionRow b) {
                 return roleRank(a.role) - roleRank(b.role);
@@ -239,7 +240,7 @@ public class Resolver {
         if (!scored.isEmpty() && (Double) scored.get(0)[0] >= GRAY) {
             Object[] best = scored.get(0);
             String candidate = entities.get(best[2]);
-            Adjudicator.Verdict v = adjudicator.sameEntity("company", m.surface, candidate,
+            Adjudicator.Verdict v = adjudicator.sameEntity(EntityType.COMPANY, m.surface, candidate,
                     "seen as " + m.role + " in file " + files.get(m.fileId).path);
             if (v.same) {
                 return new Object[] {best[2], "adjudicated:" + best[1], Math.min((Double) best[0], v.confidence)};
@@ -250,7 +251,7 @@ public class Resolver {
         // New organisation (supplier, certification body, unknown customer, ...)
         String name = isDomain ? m.surface.toLowerCase() : m.surface;
         String key = isDomain ? "domain:" + name : NameMatcher.companyKey(name);
-        long id = entity("company", key, name, isDomain ? attrs("domain", name) : null);
+        long id = entity(EntityType.COMPANY, key, name, isDomain ? attrs("domain", name) : null);
         entities.put(id, name);
         return new Object[] {id, "new", 1.0};
     }
@@ -263,7 +264,7 @@ public class Resolver {
 
         // 1. explicit job ids (folders first so their titles and customers win)
         List<MentionRow> withId = new ArrayList<MentionRow>();
-        for (MentionRow m : byType("project")) {
+        for (MentionRow m : byType(EntityType.PROJECT)) {
             if (m.attrs.get("job_id") != null) {
                 withId.add(m);
             }
@@ -280,7 +281,7 @@ public class Resolver {
             Map<String, Object> a = attrs("job_id", jobId, "title", title, "company_id", company,
                     "source", m.role.equals("folder") ? "folder" : m.role,
                     "status", m.attrs.get("status"), "value", m.attrs.get("value"));
-            EntityRow existing = entitiesDao.findByTypeAndKey(conn, "project", jobId);
+            EntityRow existing = entitiesDao.findByTypeAndKey(conn, EntityType.PROJECT, jobId);
             if (existing != null) {   // never overwrite what the folder said, except live status/value
                 Map<String, Object> old = existing.attrs;
                 Map<String, Object> keep = new LinkedHashMap<String, Object>();
@@ -291,7 +292,7 @@ public class Resolver {
                 }
                 a = keep;
             }
-            long id = entity("project", jobId, title != null ? jobId + " " + title : jobId, a);
+            long id = entity(EntityType.PROJECT, jobId, title != null ? jobId + " " + title : jobId, a);
             if (m.role.equals("folder") && title != null) {
                 String tk = titleKey(title);
                 if (!byTitle.containsKey(tk)) {
@@ -310,12 +311,12 @@ public class Resolver {
 
         // 2. title-only mentions ('Job: Palletiser Line Upgrade') need the customer as context
         Map<Long, Long> folderProject = new HashMap<Long, Long>();
-        for (MentionRow m : byType("project")) {
+        for (MentionRow m : byType(EntityType.PROJECT)) {
             if (m.role.equals("folder")) {
                 folderProject.put(m.fileId, m.entityId);
             }
         }
-        for (MentionRow m : byType("project")) {
+        for (MentionRow m : byType(EntityType.PROJECT)) {
             if (m.entityId != null) {
                 continue;
             }
@@ -386,14 +387,14 @@ public class Resolver {
 
     private void people() throws Exception {
         Map<Long, Long> folderCompany = new HashMap<Long, Long>();
-        for (MentionRow m : byType("company")) {
+        for (MentionRow m : byType(EntityType.COMPANY)) {
             if (m.role.equals("folder")) {
                 folderCompany.put(m.fileId, m.entityId);
             }
         }
         Map<String, Long> clusters = new LinkedHashMap<String, Long>();   // "name key|org" -> person
         Map<String, Long> byEmail = new HashMap<String, Long>();
-        List<MentionRow> persons = byType("person");
+        List<MentionRow> persons = byType(EntityType.PERSON);
 
         // 1. people with a known organisation (email domain, bill-to, vCard, staff roles); e-mails first
         List<MentionRow> ordered = new ArrayList<MentionRow>(persons);
@@ -415,7 +416,7 @@ public class Resolver {
             }
             String method = email != null && byEmail.containsKey(email) ? "email" : "name+organisation";
             if (id == null) {
-                id = entity("person", nk + "|" + org, m.surface, attrs("company_id", org));
+                id = entity(EntityType.PERSON, nk + "|" + org, m.surface, attrs("company_id", org));
                 method = "new";
             }
             clusters.put(nk + "|" + org, id);
@@ -484,7 +485,7 @@ public class Resolver {
                     issue("ambiguous_person", "info", "'" + m.surface + "' matches " + cands.size()
                             + " people at different organisations", m.fileId, null);
                 }
-                id = entity("person", nk + "|?", m.surface, new HashMap<String, Object>());
+                id = entity(EntityType.PERSON, nk + "|?", m.surface, new HashMap<String, Object>());
                 method = "new_unattributed";
                 confidence = 1.0;
                 addCandidate(byName, nk, null, id);
@@ -532,13 +533,13 @@ public class Resolver {
             }
         }
         Map<Long, Long> folderCompany = new HashMap<Long, Long>();
-        for (MentionRow m : byType("company")) {
+        for (MentionRow m : byType(EntityType.COMPANY)) {
             if (m.role.equals("folder")) {
                 folderCompany.put(m.fileId, m.entityId);
             }
         }
 
-        List<MentionRow> docs = byType("document");
+        List<MentionRow> docs = byType(EntityType.DOCUMENT);
         Map<String, Set<Long>> partiesOfKey = new LinkedHashMap<String, Set<Long>>();
         for (MentionRow m : docs) {
             if (m.role.equals("self")) {
@@ -583,7 +584,7 @@ public class Resolver {
                 }
                 key = key + "@" + counterparty;
             }
-            long id = entity("document", key, m.surface, null);
+            long id = entity(EntityType.DOCUMENT, key, m.surface, null);
             if (m.role.equals("self")) {
                 mergeDocAttrs(id, m);
             }
@@ -658,9 +659,9 @@ public class Resolver {
 
     private void products() throws Exception {
         Map<Long, Map<String, Integer>> descriptions = new LinkedHashMap<Long, Map<String, Integer>>();
-        for (MentionRow m : byType("product")) {
+        for (MentionRow m : byType(EntityType.PRODUCT)) {
             String code = m.attrString("code") != null ? m.attrString("code") : m.surface;
-            long id = entity("product", code, code, attrs("code", code));
+            long id = entity(EntityType.PRODUCT, code, code, attrs("code", code));
             if (!m.surface.equals(code)) {
                 if (!descriptions.containsKey(id)) {
                     descriptions.put(id, new LinkedHashMap<String, Integer>());

@@ -2,6 +2,7 @@ package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 import com.dubsof.graph.ingest.Ingestor;
 
@@ -20,7 +21,7 @@ public final class ParserUtils {
     /** Equipment/part codes like HL-6200, VFD-15, SM-750 (document-number prefixes excluded). */
     public static final Pattern PRODUCT_CODE = Pattern.compile("\\b(?!(?:INV|QUO|PO|DN|DWG|CAL|SPEC|DS|ISO|JOB|SN)-)([A-Z]{2,4}-\\d{2,4})\\b");
     /** Document-number prefix -> document type. */
-    public static final Map<String, String> PREFIX_TYPES = new HashMap<String, String>();
+    public static final Map<String, String> PREFIX_TYPES = new HashMap<>();
 
     static {
         PREFIX_TYPES.put("INV", "invoice");
@@ -51,7 +52,7 @@ public final class ParserUtils {
         all[4] = "version";
         all[5] = baseStem(stem).equals(stem) ? null : stem;
         System.arraycopy(attrs, 0, all, 6, attrs.length);
-        ex.doc = ex.addMention("document", title != null ? title : key, "self", all);
+        ex.doc = ex.addMention(EntityType.DOCUMENT, title != null ? title : key, "self", all);
         return ex.doc;
     }
 
@@ -64,11 +65,11 @@ public final class ParserUtils {
             if (key.equals(skipKey) || prefix.equals("SPEC") || prefix.equals("DS") || prefix.equals("ISO")) {
                 continue;
             }
-            ex.fact(ex.doc, "REFERENCES", ex.addMentionWithConfidence("document", key, "reference", 0.9, "key", key, "doc_type", PREFIX_TYPES.get(prefix)));
+            ex.fact(ex.doc, "REFERENCES", ex.addMentionWithConfidence(EntityType.DOCUMENT, key, "reference", 0.9, "key", key, "doc_type", PREFIX_TYPES.get(prefix)));
         }
         Matcher j = JOB_ID.matcher(text);
         while (j.find()) {
-            ex.fact(ex.addMentionWithConfidence("project", j.group(), "reference", 0.9, "job_id", j.group()), "HAS_DOCUMENT", ex.doc);
+            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, j.group(), "reference", 0.9, "job_id", j.group()), "HAS_DOCUMENT", ex.doc);
         }
     }
 
@@ -92,18 +93,18 @@ public final class ParserUtils {
         all[0] = "org_mention";
         all[1] = org;
         System.arraycopy(attrs, 0, all, 2, attrs.length);
-        Integer p = ex.addMention("person", clean, role, all);
+        Integer p = ex.addMention(EntityType.PERSON, clean, role, all);
         ex.fact(p, "WORKS_FOR", org);
         return p;
     }
 
     public static Integer owner(Extraction ex) {
-        return ex.addMentionWithConfidence("company", Config.ownerName, "implied_owner", 0.8);
+        return ex.addMentionWithConfidence(EntityType.COMPANY, Config.ownerName, "implied_owner", 0.8);
     }
 
     public static Integer companyFromDomain(Extraction ex, String addr) {
         String domain = addr.substring(addr.lastIndexOf('@') + 1).toLowerCase();
-        return ex.addMentionWithConfidence("company", domain, "email_domain", 0.9, "domain", domain);
+        return ex.addMentionWithConfidence(EntityType.COMPANY, domain, "email_domain", 0.9, "domain", domain);
     }
 
     public static String cleanPerson(String name) {

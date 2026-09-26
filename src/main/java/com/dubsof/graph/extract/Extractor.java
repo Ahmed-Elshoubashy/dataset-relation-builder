@@ -89,9 +89,7 @@ public class Extractor {
         String stem = stem(row.path);
 
         if (row.status == FileStatus.OK) {
-            
             for (Parser parser : parsers) {
-                // FIXME, can we get something like getParser ??
                 if (parser.parse(ex, row, text, folderCompany, project)) {
                     break;
                 }
@@ -106,28 +104,34 @@ public class Extractor {
                         "unread", row.status == FileStatus.OK ? null : Boolean.TRUE);
             }
         }
+        
         if (ex.doc == null) {
             return ex;   // blank, unrecognized file: nothing to link
         }
         // Filename hints: 'INV-8002_Acme Corporation', 'DN-6041_Whitmore', 'GB-40_—_Datasheet_2'
         String filenameCompany = filenameDoc(stem)[2];
         if (filenameCompany != null) {
-            Integer c = ex.addMentionWithConfidence("company", filenameCompany, "filename", 0.7, "truncated", Boolean.TRUE);
+            Integer c = ex.addMentionWithConfidence(EntityType.COMPANY, filenameCompany, "filename", 0.7, "truncated", Boolean.TRUE);
             if (PREFIX_TYPES.containsValue(ex.docMention().attrs.get("doc_type"))) {
                 ex.fact(ex.doc, "ISSUED_TO", c);
             }
         }
+        
         Matcher pm = Pattern.compile("^([A-Z]{2,4}-\\d{2,4})(?:-\\d+)?_").matcher(stem);
+        
         if (pm.lookingAt() && !Pattern.compile("^(INV|QUO|PO|DN|DWG|CAL)-").matcher(stem).lookingAt()) {
-            ex.fact(ex.doc, "DESCRIBES", ex.addMentionWithConfidence("product", pm.group(1), "filename", 0.8, "code", pm.group(1)));
+            ex.fact(ex.doc, "DESCRIBES", ex.addMentionWithConfidence(EntityType.PRODUCT, pm.group(1), "filename", 0.8, "code", pm.group(1)));
         }
+        
         ex.fact(project, "HAS_DOCUMENT", ex.doc);
         if (project == null) {
             ex.fact(ex.doc, "FILED_UNDER", folderCompany);
         }
+        
         if (!text.isEmpty() && !"email".equals(ex.docMention().attrs.get("doc_type"))) {
             refs(ex, text, (String) ex.docMention().attrs.get("key"));
         }
+        
         return ex;
     }
 
@@ -137,13 +141,13 @@ public class Extractor {
         Integer project = null;
         
         if (row.folderCompany != null) {
-            company = ex.addMention("company", row.folderCompany, "folder");
+            company = ex.addMention(EntityType.COMPANY, row.folderCompany, "folder");
         }
         
         if (row.folderJob != null) {
             Matcher jobMention = Ingestor.JOB_DIR.matcher(row.folderJob);
             if (jobMention.matches()) {
-                project = ex.addMention("project", jobMention.group(2), "folder", "job_id", jobMention.group(1), "company_mention", company);
+                project = ex.addMention(EntityType.PROJECT, jobMention.group(2), "folder", "job_id", jobMention.group(1), "company_mention", company);
                 ex.fact(company, "HAS_PROJECT", project);
             }
         }
@@ -166,28 +170,33 @@ public class Extractor {
         
         for (FileRow row : files) {
             Extraction ex = extractFile(row);
-            List<Long> ids = new ArrayList<Long>();
+            List<Long> ids = new ArrayList<>();
+            
             for (Extraction.Mention mt : ex.mentions) {
                 ids.add(mentionsDao.insert(conn, row.id, mt.etype, mt.surface, mt.role, mt.confidence));
             }
             // local mention indices in attrs (company_mention, org_mention) become database ids
             for (int i = 0; i < ex.mentions.size(); i++) {
-                Map<String, Object> attrs = new LinkedHashMap<String, Object>();
+                Map<String, Object> attrs = new LinkedHashMap<>();
                 for (Map.Entry<String, Object> e : ex.mentions.get(i).attrs.entrySet()) {
                     Object v = e.getValue();
                     attrs.put(e.getKey(), e.getKey().endsWith("_mention") ? ids.get((Integer) v) : v);
                 }
                 mentionsDao.updateAttrs(conn, ids.get(i), attrs);
             }
+            
             for (Extraction.Fact f : ex.facts) {
                 factsDao.insert(conn, row.id, ids.get(f.src), f.rel, ids.get(f.dst));
             }
+            
             for (String[] issue : ex.issues) {
                 issuesDao.insert(conn, issue[0], issue[1], issue[2], row.id, null);
             }
+            
             if (ex.doc != null) {
                 docMentionOfFile.put(row.id, ids.get(ex.doc));
             }
+            
             mentions += ids.size();
             facts += ex.facts.size();
         }
@@ -200,7 +209,7 @@ public class Extractor {
         }
         fileIssues(conn);
         Db.commit(conn);
-        Map<String, Integer> stats = new LinkedHashMap<String, Integer>();
+        Map<String, Integer> stats = new LinkedHashMap<>();
         stats.put("files", files.size());
         stats.put("mentions", mentions);
         stats.put("facts", facts);

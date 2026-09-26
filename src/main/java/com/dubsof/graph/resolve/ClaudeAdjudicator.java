@@ -10,6 +10,7 @@ import com.anthropic.models.messages.StopReason;
 import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.AdjudicationsDao;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.util.Json;
 
 import java.sql.Connection;
@@ -29,15 +30,15 @@ public class ClaudeAdjudicator implements Adjudicator {
         adjudicationsDao.createTable(cache);
     }
 
-    public Verdict sameEntity(String etype, String mention, String candidate, String context) {
+    public Verdict sameEntity(EntityType etype, String mention, String candidate, String context) {
         try {
-            String key = Json.write(Arrays.asList(etype, mention, candidate));
+            String key = Json.write(Arrays.asList(etype.value(), mention, candidate));
             String cached = adjudicationsDao.findVerdict(cache, key);
             if (cached != null) {
                 return toVerdict(Json.readMap(cached));
             }
-            String question = "In a UK packaging-machinery supplier's business files, does the " + etype + " name '"
-                    + mention + "' refer to the same real-world " + etype + " as '" + candidate + "'? Context: " + context
+            String question = "In a UK packaging-machinery supplier's business files, does the " + etype.value() + " name '"
+                    + mention + "' refer to the same real-world " + etype.value() + " as '" + candidate + "'? Context: " + context
                     + ". Consider abbreviations, typos, spacing and legal suffixes; answer false if they could "
                     + "plausibly be different organisations.";
             MessageCreateParams params = MessageCreateParams.builder()

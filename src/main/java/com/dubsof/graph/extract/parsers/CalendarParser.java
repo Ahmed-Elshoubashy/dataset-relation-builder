@@ -1,6 +1,7 @@
 package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 import com.dubsof.graph.ingest.FileKind;
 
@@ -25,9 +26,9 @@ public class CalendarParser implements Parser {
                 "date", field(text, "DTSTART", "(.+)"));
         Matcher m = Pattern.compile("^Site visit\\s+\\W\\s+(.+?)\\s+\\((.+)\\)$").matcher(summary);
         if (m.matches()) {
-            Integer company = ex.addMention("company", m.group(2), "calendar_summary");
+            Integer company = ex.addMention(EntityType.COMPANY, m.group(2), "calendar_summary");
             ex.fact(doc, "ADDRESSED_TO", company);
-            ex.fact(ex.addMentionWithConfidence("project", m.group(1), "calendar_summary", 0.9, "company_mention", company != null ? company : folderCompany),
+            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, m.group(1), "calendar_summary", 0.9, "company_mention", company != null ? company : folderCompany),
                     "HAS_DOCUMENT", doc);
         }
         return true;

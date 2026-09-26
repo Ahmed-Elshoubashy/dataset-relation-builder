@@ -2,6 +2,7 @@ package com.dubsof.graph.dao;
 
 import com.dubsof.graph.dao.row.AliasRow;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.extract.EntityType;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -59,7 +60,7 @@ public class AliasesDao {
 
     private static AliasRow mapWithType(ResultSet rs) throws SQLException {
         AliasRow a = map(rs);
-        a.entityType = rs.getString("entity_type");
+        a.entityType = EntityType.fromValue(rs.getString("entity_type"));
         return a;
     }
 }

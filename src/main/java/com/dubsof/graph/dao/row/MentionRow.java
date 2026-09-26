@@ -1,5 +1,7 @@
 package com.dubsof.graph.dao.row;
 
+import com.dubsof.graph.extract.EntityType;
+
 import java.util.Map;
 
 /**
@@ -10,7 +12,7 @@ public class MentionRow {
     public long id;
     public long fileId;
     /** company, person, project, document or product. */
-    public String etype;
+    public EntityType etype;
     /** The text as written ("BFG Ltd"). */
     public String surface;
     /** Where it was seen (bill_to, folder, email_from, ...). */

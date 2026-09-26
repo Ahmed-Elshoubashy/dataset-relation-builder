@@ -2,6 +2,7 @@ package com.dubsof.graph.dao;
 
 import com.dubsof.graph.dao.row.EntityRow;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.util.Json;
 
 import java.sql.Connection;
@@ -25,21 +26,21 @@ public class EntitiesDao {
     private static final String DELETE = "DELETE FROM entities WHERE id = ?";
     private static final String COUNTS_BY_TYPE = "SELECT etype, COUNT(*) FROM entities GROUP BY etype";
 
-    public long insert(Connection conn, String etype, String name, String key, Map<String, Object> attrs) throws SQLException {
-        return Db.insert(conn, INSERT, etype, name, key, Json.write(attrs));
+    public long insert(Connection conn, EntityType etype, String name, String key, Map<String, Object> attrs) throws SQLException {
+        return Db.insert(conn, INSERT, etype.value(), name, key, Json.write(attrs));
     }
 
     public EntityRow findById(Connection conn, long id) throws SQLException {
         return Db.first(conn, SELECT_BY_ID, EntitiesDao::map, id);
     }
 
-    public EntityRow findByTypeAndKey(Connection conn, String etype, String key) throws SQLException {
-        return Db.first(conn, SELECT_BY_TYPE_AND_KEY, EntitiesDao::map, etype, key);
+    public EntityRow findByTypeAndKey(Connection conn, EntityType etype, String key) throws SQLException {
+        return Db.first(conn, SELECT_BY_TYPE_AND_KEY, EntitiesDao::map, etype.value(), key);
     }
 
     /** Entities of one type that have no relation at all. */
-    public List<EntityRow> findUnlinkedOfType(Connection conn, String etype) throws SQLException {
-        return Db.list(conn, SELECT_UNLINKED_OF_TYPE, EntitiesDao::map, etype);
+    public List<EntityRow> findUnlinkedOfType(Connection conn, EntityType etype) throws SQLException {
+        return Db.list(conn, SELECT_UNLINKED_OF_TYPE, EntitiesDao::map, etype.value());
     }
 
     public void updateAttrs(Connection conn, long id, Map<String, Object> attrs) throws SQLException {
@@ -68,7 +69,7 @@ public class EntitiesDao {
     static EntityRow map(ResultSet rs) throws SQLException {
         EntityRow e = new EntityRow();
         e.id = rs.getLong("id");
-        e.etype = rs.getString("etype");
+        e.etype = EntityType.fromValue(rs.getString("etype"));
         e.name = rs.getString("name");
         e.key = rs.getString("key");
         e.attrs = Json.readMap(rs.getString("attrs"));

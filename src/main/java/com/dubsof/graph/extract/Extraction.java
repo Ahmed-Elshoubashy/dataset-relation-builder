@@ -15,13 +15,13 @@ public class Extraction {
 
     /** A reference to an entity exactly as it appears in the file. */
     public static class Mention {
-        public final String etype;
+        public final EntityType etype;
         public final String surface;
         public final String role;
         public final double confidence;
         public final Map<String, Object> attrs = new LinkedHashMap<>();
 
-        Mention(String etype, String surface, String role, double confidence) {
+        Mention(EntityType etype, String surface, String role, double confidence) {
             this.etype = etype;
             this.surface = surface;
             this.role = role;
@@ -43,9 +43,9 @@ public class Extraction {
     }
 
     public final long fileId;
-    public final List<Mention> mentions = new ArrayList<Mention>();
-    public final List<Fact> facts = new ArrayList<Fact>();
-    public final List<String[]> issues = new ArrayList<String[]>();   // {kind, severity, detail}
+    public final List<Mention> mentions = new ArrayList<>();
+    public final List<Fact> facts = new ArrayList<>();
+    public final List<String[]> issues = new ArrayList<>();   // {kind, severity, detail}
     /** Index of this file's own document mention. */
     public Integer doc;
 
@@ -60,7 +60,7 @@ public class Extraction {
      * @param attrs alternating key, value pairs; null values are skipped
      */
     // TODO revisit this
-    public Integer addMentionWithConfidence(String etype, String surface, String role, double confidence, Object... attrs) {
+    public Integer addMentionWithConfidence(EntityType etype, String surface, String role, double confidence, Object... attrs) {
         surface = stripChars(Text.collapseSpaces(surface), " ,;:");
         if (surface.isEmpty()) {
             return null;
@@ -69,7 +69,7 @@ public class Extraction {
         int index = -1;
         for (int i = 0; i < mentions.size(); i++) {
             Mention x = mentions.get(i);
-            if (x.etype.equals(etype) && x.surface.equals(surface) && x.role.equals(role)) {
+            if (x.etype == etype && x.surface.equals(surface) && x.role.equals(role)) {
                 found = x;
                 index = i;
                 break;
@@ -89,7 +89,7 @@ public class Extraction {
     }
 
     /** Adds a mention with full confidence. */
-    public Integer addMention(String etype, String surface, String role, Object... attrs) {
+    public Integer addMention(EntityType etype, String surface, String role, Object... attrs) {
         return addMentionWithConfidence(etype, surface, role, 1.0, attrs);
     }
 

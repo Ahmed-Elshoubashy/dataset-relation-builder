@@ -1,6 +1,7 @@
 package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 import com.dubsof.graph.util.Text;
 
@@ -52,10 +53,10 @@ public class ScreenshotTableParser implements Parser {
             }
             String customer = attrs.containsKey("customer") ? attrs.get("customer")
                     : jobI + 1 < cells.length ? cells[jobI + 1] : null;
-            Integer company = ex.addMention("company", orEmpty(customer), "screenshot_row");
+            Integer company = ex.addMention(EntityType.COMPANY, orEmpty(customer), "screenshot_row");
             Matcher jm = JOB_ID.matcher(cells[jobI]);
             jm.find();
-            Integer pj = ex.addMentionWithConfidence("project", jm.group(), "screenshot_row", 0.9, "job_id", jm.group(),
+            Integer pj = ex.addMentionWithConfidence(EntityType.PROJECT, jm.group(), "screenshot_row", 0.9, "job_id", jm.group(),
                     "company_mention", company, "status", attrs.get("status"), "value", attrs.get("value"));
             ex.fact(company, "HAS_PROJECT", pj);
             ex.fact(pj, "HAS_DOCUMENT", doc);

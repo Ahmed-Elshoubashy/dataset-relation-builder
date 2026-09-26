@@ -1,6 +1,7 @@
 package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 import com.dubsof.graph.ingest.FileKind;
 
@@ -67,7 +68,7 @@ public class EmailParser implements Parser {
             }
         }
         if (title != null) {
-            ex.fact(ex.addMentionWithConfidence("project", title, "email_subject", 0.8, "company_mention", folderCompany), "HAS_DOCUMENT", doc);
+            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, title, "email_subject", 0.8, "company_mention", folderCompany), "HAS_DOCUMENT", doc);
         }
         refs(ex, subject + "\n" + body, null);
         return true;

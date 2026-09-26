@@ -1,5 +1,7 @@
 package com.dubsof.graph.resolve;
 
+import com.dubsof.graph.extract.EntityType;
+
 /**
  * Second opinion on borderline matches (score between GRAY and ACCEPT in the Resolver).
  * The default RuleAdjudicator keeps borderline pairs apart and records them as
@@ -7,7 +9,7 @@ package com.dubsof.graph.resolve;
  */
 public interface Adjudicator {
 
-    Verdict sameEntity(String etype, String mention, String candidate, String context);
+    Verdict sameEntity(EntityType etype, String mention, String candidate, String context);
 
     /** The answer: same or not, how sure, and why. */
     class Verdict {

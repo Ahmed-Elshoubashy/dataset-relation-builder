@@ -1,6 +1,7 @@
 package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 
 import static com.dubsof.graph.extract.parsers.ParserUtils.document;
@@ -19,11 +20,11 @@ public class DrawingParser implements Parser {
         }
         String title = field(text, "Title", "(.+)");
         Integer doc = document(ex, row, "drawing", no, title != null ? title : no, "revision", field(text, "Rev", "(.+)"));
-        Integer customer = ex.addMention("company", orEmpty(field(text, "Customer", "(.+)")), "drawing_customer");
+        Integer customer = ex.addMention(EntityType.COMPANY, orEmpty(field(text, "Customer", "(.+)")), "drawing_customer");
         ex.fact(doc, "ISSUED_TO", customer);
         String job = field(text, "Job", "(.+)");
         if (job != null) {
-            ex.fact(ex.addMentionWithConfidence("project", job, "doc_job_field", 0.9, "company_mention", customer != null ? customer : folderCompany),
+            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, job, "doc_job_field", 0.9, "company_mention", customer != null ? customer : folderCompany),
                     "HAS_DOCUMENT", doc);
         }
         String by = field(text, "Drawn By", "(.+)");

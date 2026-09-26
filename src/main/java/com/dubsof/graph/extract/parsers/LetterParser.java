@@ -2,6 +2,7 @@ package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 import com.dubsof.graph.util.Text;
 
@@ -48,7 +49,7 @@ public class LetterParser implements Parser {
         List<String> block = lines.subList(dateI + 1, bodyI);
         if (!block.isEmpty()) {
             String address = join(block.subList(1, block.size()), ", ");
-            ex.fact(doc, "ADDRESSED_TO", ex.addMention("company", block.get(0), "letter_recipient", "address", address.isEmpty() ? null : address));
+            ex.fact(doc, "ADDRESSED_TO", ex.addMention(EntityType.COMPANY, block.get(0), "letter_recipient", "address", address.isEmpty() ? null : address));
         }
         String job = subject != null && subject.contains("·") ? subject.split("·", 2)[1].trim() : null;
         if (job == null) {
@@ -58,7 +59,7 @@ public class LetterParser implements Parser {
             }
         }
         if (job != null) {
-            ex.fact(ex.addMentionWithConfidence("project", job, "doc_job_field", 0.9, "company_mention", folderCompany), "HAS_DOCUMENT", doc);
+            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, job, "doc_job_field", 0.9, "company_mention", folderCompany), "HAS_DOCUMENT", doc);
         }
         String ownerFirstWord = Config.ownerName.split(" ")[0];
         for (int i = 0; i < lines.size(); i++) {

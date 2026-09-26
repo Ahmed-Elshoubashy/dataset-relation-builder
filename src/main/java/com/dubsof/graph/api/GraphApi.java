@@ -16,6 +16,7 @@ import com.dubsof.graph.dao.row.IssueRow;
 import com.dubsof.graph.dao.row.RelatedEntityRow;
 import com.dubsof.graph.dao.row.RelationRow;
 import com.dubsof.graph.dao.row.SourceRow;
+import com.dubsof.graph.extract.EntityType;
 
 import java.sql.Connection;
 import java.util.ArrayList;
@@ -30,7 +31,13 @@ import java.util.Set;
 /** The explorer's read-only queries over graph.db. Rows from the DAOs are turned into plain maps and sent as JSON. */
 public class GraphApi {
 
-    private static final List<String> ETYPES = Arrays.asList("company", "project", "person", "document", "product");
+    private static final List<String> ETYPES = new ArrayList<String>();
+
+    static {
+        for (EntityType t : EntityType.values()) {
+            ETYPES.add(t.value());
+        }
+    }
     /** How many evidence files the details panel lists. */
     private static final int MAX_SOURCES = 400;
 
@@ -236,7 +243,7 @@ public class GraphApi {
     private Map<String, Object> summary(EntityRow e) throws Exception {
         Map<String, Object> attrs = e.attrs;
         Object sub = null;
-        if (e.etype.equals("document")) {
+        if (e.etype == EntityType.DOCUMENT) {
             List<String> parts = new ArrayList<String>();
             if (attrs.get("doc_type") != null) {
                 parts.add(((String) attrs.get("doc_type")).replace("_", " "));
@@ -245,19 +252,19 @@ public class GraphApi {
                 parts.add(String.valueOf(attrs.get("date")));
             }
             sub = parts.isEmpty() ? null : join(parts, " · ");
-        } else if ((e.etype.equals("person") || e.etype.equals("project")) && attrs.get("company_id") != null) {
+        } else if ((e.etype == EntityType.PERSON || e.etype == EntityType.PROJECT) && attrs.get("company_id") != null) {
             EntityRow company = entitiesDao.findById(conn, ((Number) attrs.get("company_id")).longValue());
             sub = company == null ? null : company.name;
-        } else if (e.etype.equals("project")) {
+        } else if (e.etype == EntityType.PROJECT) {
             sub = attrs.get("title") == null ? null : attrs.get("status") != null ? attrs.get("status") : "project";
-        } else if (e.etype.equals("company")) {
+        } else if (e.etype == EntityType.COMPANY) {
             sub = attrs.get("role");
-        } else if (e.etype.equals("product")) {
+        } else if (e.etype == EntityType.PRODUCT) {
             sub = attrs.get("code");
         }
         Map<String, Object> out = new LinkedHashMap<String, Object>();
         out.put("id", e.id);
-        out.put("type", e.etype);
+        out.put("type", e.etype.value());
         out.put("name", e.name);
         out.put("key", e.key);
         out.put("subtitle", sub);

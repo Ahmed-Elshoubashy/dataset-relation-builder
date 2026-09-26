@@ -1,6 +1,7 @@
 package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 import com.dubsof.graph.util.Text;
 
@@ -24,11 +25,11 @@ public class ContractParser implements Parser {
         String stem = baseStem(stem(row.path));
         String key = "contract:" + (row.folderJob != null ? row.folderJob : row.path) + ":" + stem;
         Integer doc = document(ex, row, "contract", key, kind + " (" + stem.replace("Contract_", "").replace("_", " ") + ")");
-        ex.fact(ex.addMention("company", m.group(1), "contract_party"), "PARTY_TO", doc);
-        ex.fact(ex.addMention("company", m.group(2), "contract_party"), "PARTY_TO", doc);
+        ex.fact(ex.addMention(EntityType.COMPANY, m.group(1), "contract_party"), "PARTY_TO", doc);
+        ex.fact(ex.addMention(EntityType.COMPANY, m.group(2), "contract_party"), "PARTY_TO", doc);
         String job = field(text, "Relating to", "(.+)");
         if (job != null) {
-            ex.fact(ex.addMentionWithConfidence("project", job, "doc_job_field", 0.9, "company_mention", folderCompany), "HAS_DOCUMENT", doc);
+            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, job, "doc_job_field", 0.9, "company_mention", folderCompany), "HAS_DOCUMENT", doc);
         }
         return true;
     }

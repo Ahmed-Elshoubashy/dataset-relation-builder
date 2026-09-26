@@ -1,6 +1,7 @@
 package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 import com.dubsof.graph.util.Text;
 
@@ -121,7 +122,7 @@ public class BusinessDocParser implements Parser {
                 }
                 if (!block.isEmpty()) {
                     String address = join(block.subList(1, block.size()), ", ");
-                    billCompany = ex.addMention("company", block.get(0), "bill_to", "address", address.isEmpty() ? null : address);
+                    billCompany = ex.addMention(EntityType.COMPANY, block.get(0), "bill_to", "address", address.isEmpty() ? null : address);
                 }
                 break;
             }
@@ -132,17 +133,17 @@ public class BusinessDocParser implements Parser {
             ex.fact(doc, "ATTENTION_OF", personWithOrg(ex, attn, "attn", billCompany));
         }
         if (job != null) {
-            Integer pj = ex.addMentionWithConfidence("project", job, "doc_job_field", 0.9,
+            Integer pj = ex.addMentionWithConfidence(EntityType.PROJECT, job, "doc_job_field", 0.9,
                     "company_mention", billCompany != null ? billCompany : folderCompany);
             ex.fact(pj, "HAS_DOCUMENT", doc);
         }
         if (quoteRef != null) {
-            ex.fact(doc, "REFERENCES", ex.addMention("document", quoteRef, "reference", "key", quoteRef, "doc_type", "quote"));
+            ex.fact(doc, "REFERENCES", ex.addMention(EntityType.DOCUMENT, quoteRef, "reference", "key", quoteRef, "doc_type", "quote"));
         }
         for (Map<String, Object> it : items) {
             Matcher code = PRODUCT_CODE.matcher((String) it.get("desc"));
             if (code.find()) {
-                ex.fact(doc, "LISTS_PRODUCT", ex.addMention("product", (String) it.get("desc"), "line_item", "code", code.group(1)));
+                ex.fact(doc, "LISTS_PRODUCT", ex.addMention(EntityType.PRODUCT, (String) it.get("desc"), "line_item", "code", code.group(1)));
             }
         }
         return true;

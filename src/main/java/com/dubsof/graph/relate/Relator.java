@@ -17,6 +17,7 @@ import com.dubsof.graph.dao.row.MentionRow;
 import com.dubsof.graph.dao.row.MisfiledDocumentRow;
 import com.dubsof.graph.dao.row.MultiCustomerDocumentRow;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.ingest.FileStatus;
 import com.dubsof.graph.resolve.NameMatcher;
 
@@ -111,7 +112,7 @@ public class Relator {
             if (!names.containsKey(a.alias)) {
                 names.put(a.alias, new HashSet<String>());
             }
-            names.get(a.alias).add(a.entityId + "|" + a.entityType);
+            names.get(a.alias).add(a.entityId + "|" + a.entityType.value());
         }
         final Map<String, String> unique = new HashMap<String, String>();
         for (Map.Entry<String, Set<String>> e : names.entrySet()) {
@@ -163,7 +164,7 @@ public class Relator {
                 if (here.contains(entity)) {
                     continue;
                 }
-                mentionsDao.insertResolved(conn, f.id, target[1], name, "text_mention", entity, "gazetteer", 0.6);
+                mentionsDao.insertResolved(conn, f.id, EntityType.fromValue(target[1]), name, "text_mention", entity, "gazetteer", 0.6);
                 Set<Long> one = new TreeSet<Long>();
                 one.add(f.id);
                 upsert(doc, entity, "MENTIONS", one);
@@ -177,7 +178,7 @@ public class Relator {
 
     /** Drops file documents that connect to nothing (stock photos, blank notes). */
     private int pruneOrphans() throws Exception {
-        List<EntityRow> orphans = entitiesDao.findUnlinkedOfType(conn, "document");
+        List<EntityRow> orphans = entitiesDao.findUnlinkedOfType(conn, EntityType.DOCUMENT);
         for (EntityRow e : orphans) {
             mentionsDao.unlinkEntity(conn, e.id, "orphan");
             aliasesDao.deleteByEntity(conn, e.id);
@@ -189,7 +190,7 @@ public class Relator {
 
     @SuppressWarnings("unchecked")
     private void checks() throws Exception {
-        EntityRow owner = entitiesDao.findByTypeAndKey(conn, "company", NameMatcher.companyKey(Config.ownerName));
+        EntityRow owner = entitiesDao.findByTypeAndKey(conn, EntityType.COMPANY, NameMatcher.companyKey(Config.ownerName));
         long ownerId = owner == null ? 0 : owner.id;
         // referenced but never found as a file
         for (EntityRow d : consistencyChecks.findDocumentsWithoutFile(conn)) {

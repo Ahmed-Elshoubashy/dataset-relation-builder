@@ -1,6 +1,7 @@
 package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 import com.dubsof.graph.util.Text;
 
@@ -29,7 +30,7 @@ public class ItemListParser implements Parser {
             String cell = l.split("\\s*[|,]\\s*")[0];
             Matcher m = PRODUCT_CODE.matcher(cell);
             if (m.find()) {
-                ex.fact(doc, "LISTS_PRODUCT", ex.addMention("product", cell, "line_item", "code", m.group(1)));
+                ex.fact(doc, "LISTS_PRODUCT", ex.addMention(EntityType.PRODUCT, cell, "line_item", "code", m.group(1)));
             }
         }
         return true;
