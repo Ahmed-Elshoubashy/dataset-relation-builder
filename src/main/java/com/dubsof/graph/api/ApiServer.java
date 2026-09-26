@@ -2,6 +2,7 @@ package com.dubsof.graph.api;
 
 import com.dubsof.graph.Config;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.util.Json;
 import com.dubsof.graph.util.Text;
 import com.sun.net.httpserver.HttpExchange;
@@ -183,14 +184,7 @@ public class ApiServer {
         if (r == null) {
             throw new ApiException(404, "Not Found");
         }
-        Map<String, String> types = new HashMap<String, String>();
-        types.put("pdf", "application/pdf");
-        types.put("png", "image/png");
-        types.put("jpg", "image/jpeg");
-        for (String k : new String[] {"eml", "text", "vcf", "ics", "rtf"}) {
-            types.put(k, "text/plain; charset=utf-8");
-        }
-        String type = types.containsKey(r.get("kind")) ? types.get(r.get("kind")) : "application/octet-stream";
+        String type = FileKind.fromValue((String) r.get("kind")).contentType();
         String[] members = ((String) r.get("path")).split(Pattern.quote("::"));
         String name = members[members.length - 1].substring(members[members.length - 1].lastIndexOf('/') + 1);
         byte[] data = java.nio.file.Files.readAllBytes(new File((String) r.get("blob_path")).toPath());

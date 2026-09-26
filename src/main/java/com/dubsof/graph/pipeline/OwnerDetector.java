@@ -1,6 +1,8 @@
 package com.dubsof.graph.pipeline;
 
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.ingest.FileKind;
+import com.dubsof.graph.ingest.FileStatus;
 
 import java.sql.Connection;
 import java.util.HashMap;
@@ -25,7 +27,8 @@ public final class OwnerDetector {
     public static String[] detect(Connection conn) throws Exception {
         Map<String, Integer> heads = new LinkedHashMap<String, Integer>();
         int pdfs = 0;
-        for (Map<String, Object> r : Db.query(conn, "SELECT text FROM files WHERE kind='pdf' AND status='ok' AND text_source='native'")) {
+        for (Map<String, Object> r : Db.query(conn, "SELECT text FROM files WHERE kind=? AND status=? AND text_source='native'",
+                FileKind.PDF.value(), FileStatus.OK.value())) {
             for (String line : ((String) r.get("text")).split("\\r?\\n")) {
                 if (!line.trim().isEmpty()) {
                     count(heads, line.trim());
@@ -43,7 +46,8 @@ public final class OwnerDetector {
             }
         }
         Map<String, Integer> domains = new HashMap<String, Integer>();
-        for (Map<String, Object> r : Db.query(conn, "SELECT text FROM files WHERE kind='eml' AND status='ok'")) {
+        for (Map<String, Object> r : Db.query(conn, "SELECT text FROM files WHERE kind=? AND status=?",
+                FileKind.EML.value(), FileStatus.OK.value())) {
             Matcher m = FROM.matcher((String) r.get("text"));
             if (m.find()) {
                 count(domains, m.group(1).toLowerCase().replaceAll(">+$", ""));

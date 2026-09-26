@@ -1,5 +1,7 @@
 package com.dubsof.graph.read;
 
+import com.dubsof.graph.ingest.FileKind;
+
 /**
  * The OCR seam: anything that turns an image-only document into plain text.
  *
@@ -12,6 +14,6 @@ public interface TextReader {
     /** Short name, stored with each transcription ("claude", "tesseract", "none"). */
     String name();
 
-    /** Text of an image-only file. {@code kind} is "pdf", "png" or "jpg". */
-    String read(byte[] data, String kind, String filename) throws Exception;
+    /** Text of an image-only file. {@code kind} is PDF, PNG or JPG (see {@link FileKind#isOcrable()}). */
+    String read(byte[] data, FileKind kind, String filename) throws Exception;
 }

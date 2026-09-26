@@ -2,6 +2,8 @@ package com.dubsof.graph.read;
 
 import com.dubsof.graph.Config;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.ingest.FileKind;
+import com.dubsof.graph.ingest.FileStatus;
 import com.dubsof.graph.pipeline.Progress;
 import com.dubsof.graph.util.Text;
 import org.apache.pdfbox.Loader;
@@ -61,31 +63,32 @@ public class TextStage {
             stats.put(k, 0);
         }
         List<Map<String, Object>> rows = Db.query(conn,
-                "SELECT * FROM files WHERE status IN ('new','needs_ocr') AND duplicate_of IS NULL");
+                "SELECT * FROM files WHERE status IN (?,?) AND duplicate_of IS NULL",
+                FileStatus.NEW.value(), FileStatus.NEEDS_OCR.value());
         List<Map<String, Object>> ocrQueue = new ArrayList<Map<String, Object>>();
         for (Map<String, Object> row : rows) {
             long id = Db.id(row.get("id"));
-            String kind = (String) row.get("kind");
-            if (kind.equals("zip")) {
-                Db.update(conn, "UPDATE files SET status='container' WHERE id=?", id);
+            FileKind kind = FileKind.fromValue((String) row.get("kind"));
+            if (kind == FileKind.ZIP) {
+                Db.update(conn, "UPDATE files SET status=? WHERE id=?", FileStatus.CONTAINER.value(), id);
                 continue;
             }
             byte[] data = Files.readAllBytes(new File((String) row.get("blob_path")).toPath());
             try {
                 String text = Text.truncate(readNative(kind, data), Config.MAX_TEXT_CHARS);
-                String status = Text.isBlank(text) ? "empty" : "ok";
-                increment(stats, status.equals("ok") ? "native" : "empty");
-                Db.update(conn, "UPDATE files SET text=?, text_source='native', status=? WHERE id=?", text, status, id);
+                FileStatus status = Text.isBlank(text) ? FileStatus.EMPTY : FileStatus.OK;
+                increment(stats, status == FileStatus.OK ? "native" : "empty");
+                Db.update(conn, "UPDATE files SET text=?, text_source='native', status=? WHERE id=?", text, status.value(), id);
             } catch (NeedsOcr e) {
                 if (wantsOcr(row)) {
                     ocrQueue.add(row);
                 } else {
                     increment(stats, "skipped_photos");
-                    Db.update(conn, "UPDATE files SET status='empty' WHERE id=?", id);
+                    Db.update(conn, "UPDATE files SET status=? WHERE id=?", FileStatus.EMPTY.value(), id);
                 }
             } catch (Exception e) {   // unreadable, truncated or mislabelled files
                 increment(stats, "corrupt");
-                Db.update(conn, "UPDATE files SET status='corrupt', error=? WHERE id=?",
+                Db.update(conn, "UPDATE files SET status=?, error=? WHERE id=?", FileStatus.CORRUPT.value(),
                         Text.truncate(e.getClass().getSimpleName() + ": " + e.getMessage(), 500), id);
             }
         }
@@ -94,12 +97,12 @@ public class TextStage {
         if (!ocrQueue.isEmpty()) {
             runOcr(conn, ocrQueue, ocrBackend, apiKey, progress, stats);
         }
-        stats.put("ocr_pending", (int) Db.count(conn, "SELECT COUNT(*) FROM files WHERE status='needs_ocr'"));
+        stats.put("ocr_pending", (int) Db.count(conn, "SELECT COUNT(*) FROM files WHERE status=?", FileStatus.NEEDS_OCR.value()));
 
         // Byte-identical duplicates share their original's text.
         Db.update(conn, "UPDATE files SET (text, text_source, status, error) ="
                 + " (SELECT o.text, o.text_source, o.status, o.error FROM files o WHERE o.id = files.duplicate_of)"
-                + " WHERE duplicate_of IS NOT NULL AND status != 'skipped'");
+                + " WHERE duplicate_of IS NOT NULL AND status != ?", FileStatus.SKIPPED.value());
         Db.commit(conn);
         return stats;
     }
@@ -116,7 +119,7 @@ public class TextStage {
         } catch (ReaderUnavailableException e) {
             progress.update(2, "read", "OCR unavailable (" + e.getMessage() + "); " + queue.size() + " image-only files left unread");
             for (Map<String, Object> row : queue) {
-                Db.update(conn, "UPDATE files SET status='needs_ocr' WHERE id=?", row.get("id"));
+                Db.update(conn, "UPDATE files SET status=? WHERE id=?", FileStatus.NEEDS_OCR.value(), row.get("id"));
             }
             Db.commit(conn);
             return;
@@ -132,7 +135,8 @@ public class TextStage {
                         String id = String.valueOf(row.get("id"));
                         try {
                             byte[] data = Files.readAllBytes(new File((String) row.get("blob_path")).toPath());
-                            String text = reader.readWithHash((String) row.get("sha256"), data, (String) row.get("kind"), (String) row.get("path"));
+                            FileKind kind = FileKind.fromValue((String) row.get("kind"));
+                            String text = reader.readWithHash((String) row.get("sha256"), data, kind, (String) row.get("path"));
                             return new String[] {id, text, null};
                         } catch (Exception e) {
                             return new String[] {id, null, "OCR failed: " + e.getMessage()};
@@ -145,10 +149,10 @@ public class TextStage {
                 String[] r = done.take().get();
                 if (r[2] == null) {
                     Db.update(conn, "UPDATE files SET text=?, text_source=?, status=?, error=NULL WHERE id=?",
-                            r[1], reader.name(), Text.isBlank(r[1]) ? "empty" : "ok", Long.parseLong(r[0]));
+                            r[1], reader.name(), (Text.isBlank(r[1]) ? FileStatus.EMPTY : FileStatus.OK).value(), Long.parseLong(r[0]));
                     increment(stats, "ocr");
                 } else {   // stays waiting for the next OCR run
-                    Db.update(conn, "UPDATE files SET status='needs_ocr', error=? WHERE id=?",
+                    Db.update(conn, "UPDATE files SET status=?, error=? WHERE id=?", FileStatus.NEEDS_OCR.value(),
                             Text.truncate(r[2], 500), Long.parseLong(r[0]));
                 }
                 if (i % 5 == 0 || i == queue.size()) {
@@ -167,14 +171,14 @@ public class TextStage {
         String[] members = path.split(Pattern.quote("::"));
         String name = members[members.length - 1];
         name = name.substring(name.lastIndexOf('/') + 1);
-        String kind = (String) row.get("kind");
-        if (kind.equals("jpg") && PHOTO_NAME.matcher(name).matches() && !Config.OCR_PHOTOS) {
+        FileKind kind = FileKind.fromValue((String) row.get("kind"));
+        if (kind == FileKind.JPG && PHOTO_NAME.matcher(name).matches() && !Config.OCR_PHOTOS) {
             return false;
         }
         if (name.equals("site_photo.png") && !Config.OCR_PHOTOS) {   // photos attached to emails
             return false;
         }
-        return kind.equals("pdf") || kind.equals("png") || kind.equals("jpg");
+        return kind.isOcrable();
     }
 
     private static void increment(Map<String, Integer> stats, String key) {
@@ -183,26 +187,25 @@ public class TextStage {
 
     // ------------------------------------------------------------------ native parsers
 
-    static String readNative(String kind, byte[] data) throws Exception {
-        if (kind.equals("pdf")) {
-            return pdf(data);
+    static String readNative(FileKind kind, byte[] data) throws Exception {
+        switch (kind) {
+            case PDF:
+                return pdf(data);
+            case EML:
+                return email(data);
+            case DOCX:
+                return docx(data);
+            case XLSX:
+                return xlsx(data);
+            case RTF:
+                return rtf(data);
+            case TEXT:
+            case VCF:
+            case ICS:
+                return Text.utf8OrLatin1(data);
+            default:
+                throw new NeedsOcr();   // png, jpg, and anything else without text
         }
-        if (kind.equals("eml")) {
-            return email(data);
-        }
-        if (kind.equals("docx")) {
-            return docx(data);
-        }
-        if (kind.equals("xlsx")) {
-            return xlsx(data);
-        }
-        if (kind.equals("rtf")) {
-            return rtf(data);
-        }
-        if (kind.equals("text") || kind.equals("vcf") || kind.equals("ics")) {
-            return Text.utf8OrLatin1(data);
-        }
-        throw new NeedsOcr();   // png, jpg, and anything else without text
     }
 
     private static String pdf(byte[] data) throws Exception {

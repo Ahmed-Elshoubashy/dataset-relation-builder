@@ -2,6 +2,7 @@ package com.dubsof.graph.read;
 
 import com.dubsof.graph.Config;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.util.Text;
 
 import java.sql.Connection;
@@ -26,11 +27,11 @@ public class CachedReader implements TextReader {
         return inner.name();
     }
 
-    public String read(byte[] data, String kind, String filename) throws Exception {
+    public String read(byte[] data, FileKind kind, String filename) throws Exception {
         return readWithHash(Text.sha256(data), data, kind, filename);
     }
 
-    public String readWithHash(String sha, byte[] data, String kind, String filename) throws Exception {
+    public String readWithHash(String sha, byte[] data, FileKind kind, String filename) throws Exception {
         String hit = cached(sha);
         if (hit != null) {
             return hit;

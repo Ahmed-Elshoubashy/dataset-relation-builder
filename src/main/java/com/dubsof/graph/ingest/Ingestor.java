@@ -23,7 +23,6 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -64,13 +63,14 @@ public class Ingestor {
         Ingestor ing = new Ingestor(conn);
         List<Path> paths = listFiles(root.toPath());
         for (int i = 0; i < paths.size(); i++) {
-            Path p = paths.get(i);
-            String rel = root.toPath().relativize(p).toString().replace(File.separatorChar, '/');
-            ing.add(rel, Files.readAllBytes(p), p.toFile(), null, null);
+            Path path = paths.get(i);
+            String relativePath = relativePath(root.toPath(), path);
+            ing.add(relativePath, Files.readAllBytes(path), path.toFile(), null, null);
             if (i % 250 == 0) {
                 progress.update(1, "ingest", String.format("Scanned %,d files", ing.count));
             }
         }
+
         // Byte-identical duplicates point at their first copy, so each unique blob is read/OCR'd once.
         Db.update(conn, "UPDATE files SET duplicate_of = (SELECT MIN(f2.id) FROM files f2 WHERE f2.sha256 = files.sha256)"
                 + " WHERE id != (SELECT MIN(f2.id) FROM files f2 WHERE f2.sha256 = files.sha256)");
@@ -78,33 +78,31 @@ public class Ingestor {
         return ing.count;
     }
 
-    /** All regular files under root, in a stable order (component by component, like Python's sorted(rglob)). */
+    /**
+     * All regular files under root, sorted by their path relative to root.
+     * Files.walk() returns files in the filesystem's own order, which can differ between runs and
+     * machines (macOS vs Docker); a fixed order makes the same folder always give the same graph
+     * (same entity ids, same "first copy" of duplicates, same first-seen names).
+     */
     private static List<Path> listFiles(Path root) throws IOException {
-        final List<Path> out = new ArrayList<Path>();
-        java.util.stream.Stream<Path> walk = Files.walk(root);
-        try {
-            for (Object o : walk.toArray()) {
-                Path p = (Path) o;
-                if (Files.isRegularFile(p) && !IGNORED_NAMES.contains(p.getFileName().toString())) {
-                    out.add(p);
+        final List<Path> filePaths = new ArrayList<>();
+
+        try (java.util.stream.Stream<Path> walk = Files.walk(root)) {
+            for (Object fileObject : walk.toArray()) {
+                Path path = (Path) fileObject;
+                if (Files.isRegularFile(path) && !IGNORED_NAMES.contains(path.getFileName().toString())) {
+                    filePaths.add(path);
                 }
             }
-        } finally {
-            walk.close();
         }
-        Collections.sort(out, new Comparator<Path>() {
-            public int compare(Path a, Path b) {
-                int n = Math.min(a.getNameCount(), b.getNameCount());
-                for (int i = 0; i < n; i++) {
-                    int c = a.getName(i).toString().compareTo(b.getName(i).toString());
-                    if (c != 0) {
-                        return c;
-                    }
-                }
-                return a.getNameCount() - b.getNameCount();
-            }
-        });
-        return out;
+
+        filePaths.sort(Comparator.comparing(path -> relativePath(root, path)));
+        return filePaths;
+    }
+
+    /** "Customers/Acme Corporation/…/INV-8002.pdf": relative to root, always with '/' separators. */
+    private static String relativePath(Path root, Path path) {
+        return root.relativize(path).toString().replace(File.separatorChar, '/');
     }
 
     /** Records one file (or archive member) and expands it if it is a container. */
@@ -114,32 +112,38 @@ public class Ingestor {
             return;
         }
         String sha = Text.sha256(data);
-        String kind = sniff(data, rel);
-        String status = "new";
+        FileKind kind = sniff(data, rel);
+        FileStatus status = FileStatus.NEW;
+
         if (name.startsWith("~$")) {
-            status = "skipped";   // Office lock file
-        } else if (kind.equals("code") || kind.equals("media") || kind.equals("binary")
-                || rel.contains("/.git/") || rel.startsWith("Software/")) {
-            status = "skipped";
+            status = FileStatus.SKIPPED;   // Office lock file
+
+        } else if (kind.isIgnored() || rel.contains("/.git/") || rel.startsWith("Software/")) {
+            status = FileStatus.SKIPPED;
         }
+
         if (blob == null) {
             blob = saveBlob(data, sha, name);
         }
+
         if (ctx == null) {
             ctx = FolderContext.of(rel);
         }
+
         long id = Db.insert(conn, "INSERT OR IGNORE INTO files (path, parent_id, blob_path, sha256, size, ext, kind,"
                         + " area, folder_company, folder_job, folder_category, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                rel, parentId, blob.getAbsolutePath(), sha, data.length, extension(name), kind,
-                ctx.area, ctx.company, ctx.job, ctx.category, status);
+                rel, parentId, blob.getAbsolutePath(), sha, data.length, extension(name), kind.value(),
+                ctx.area, ctx.company, ctx.job, ctx.category, status.value());
         count++;
+
         if (id == 0) {
             return;
         }
         // Members inherit the container's folder context (an email filed under a job belongs to that job).
-        if (kind.equals("zip")) {
+        if (kind == FileKind.ZIP) {
             expandZip(rel, data, id, ctx);
-        } else if (kind.equals("eml")) {
+
+        } else if (kind == FileKind.EML) {
             expandEmail(rel, data, id, ctx);
         }
     }
@@ -148,6 +152,7 @@ public class Ingestor {
         List<Object[]> members;
         try {
             members = readZip(data, StandardCharsets.UTF_8);
+
         } catch (IllegalArgumentException badName) {
             members = readZip(data, Charset.forName("CP437"));
         }
@@ -157,24 +162,24 @@ public class Ingestor {
     }
 
     private static List<Object[]> readZip(byte[] data, Charset charset) throws IOException {
-        List<Object[]> out = new ArrayList<Object[]>();
-        ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(data), charset);
-        try {
-            ZipEntry e;
-            while ((e = zin.getNextEntry()) != null) {
-                if (!e.isDirectory() && !e.getName().startsWith("__MACOSX")) {
-                    out.add(new Object[] {e.getName(), Text.readAll(zin)});
+        List<Object[]> files = new ArrayList<>();
+        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(data), charset)) {
+            ZipEntry zipEntry = zin.getNextEntry();
+            while (zipEntry != null) {
+                // Skip folders, and the hidden "__MACOSX/" folder that macOS's "Compress" adds to zips:
+                // it only holds "._<name>" metadata copies of the real files, not documents.
+                if (!zipEntry.isDirectory() && !zipEntry.getName().startsWith("__MACOSX")) {
+                    files.add(new Object[] { zipEntry.getName(), Text.readAll(zin) });
                 }
+                zipEntry = zin.getNextEntry();
             }
-        } finally {
-            zin.close();
         }
-        return out;
+        return files;
     }
 
     private void expandEmail(String rel, byte[] data, long id, FolderContext ctx) throws Exception {
         MimeMessage msg = new MimeMessage(Session.getInstance(new Properties()), new ByteArrayInputStream(data));
-        List<Part> attachments = new ArrayList<Part>();
+        List<Part> attachments = new ArrayList<>();
         collectAttachments(msg, attachments);
         for (Part part : attachments) {
             byte[] payload = Text.readAll(part.getInputStream());
@@ -185,15 +190,15 @@ public class Ingestor {
         }
     }
 
-    private static void collectAttachments(Part part, List<Part> out) throws Exception {
+    private static void collectAttachments(Part part, List<Part> attachments) throws Exception {
         if (part.isMimeType("multipart/*")) {
             Multipart mp = (Multipart) part.getContent();
             for (int i = 0; i < mp.getCount(); i++) {
                 BodyPart child = mp.getBodyPart(i);
                 if (Part.ATTACHMENT.equalsIgnoreCase(child.getDisposition()) || child.getFileName() != null) {
-                    out.add(child);
+                    attachments.add(child);
                 } else {
-                    collectAttachments(child, out);
+                    collectAttachments(child, attachments);
                 }
             }
         }
@@ -201,45 +206,45 @@ public class Ingestor {
 
     // ------------------------------------------------------------------ type sniffing
 
-    public static String sniff(byte[] data, String name) {
+    public static FileKind sniff(byte[] data, String name) {
         byte[] head = Arrays.copyOf(data, Math.min(data.length, 4096));
         String ext = extension(lastName(name));
         if (startsWith(head, "%PDF")) {
-            return "pdf";
+            return FileKind.PDF;
         }
         if (startsWith(head, "PK")) {
             List<String> names = zipNames(data);
             if (names == null) {
-                return "corrupt";
+                return FileKind.CORRUPT;
             }
             for (String n : names) {
                 if (n.startsWith("word/")) {
-                    return "docx";
+                    return FileKind.DOCX;
                 }
             }
             for (String n : names) {
                 if (n.startsWith("xl/")) {
-                    return "xlsx";
+                    return FileKind.XLSX;
                 }
             }
-            return "zip";
+            return FileKind.ZIP;
         }
         if (head.length >= 4 && (head[0] & 0xff) == 0x89 && head[1] == 'P' && head[2] == 'N' && head[3] == 'G') {
-            return "png";
+            return FileKind.PNG;
         }
         if (head.length >= 2 && (head[0] & 0xff) == 0xff && (head[1] & 0xff) == 0xd8) {
-            return "jpg";
+            return FileKind.JPG;
         }
         if (startsWith(head, "{\\rtf")) {
-            return "rtf";
+            return FileKind.RTF;
         }
         if (startsWith(head, "ID3") || startsWith(head, "RIFF")
                 || (head.length >= 8 && new String(head, 4, 4, StandardCharsets.ISO_8859_1).equals("ftyp"))
                 || (head.length >= 2 && (head[0] & 0xff) == 0xff && (head[1] & 0xff) == 0xfb)) {
-            return "media";
+            return FileKind.MEDIA;
         }
         if (CODE_EXTS.contains(ext) || name.contains("/.git/") || name.startsWith(".git")) {
-            return "code";
+            return FileKind.CODE;
         }
         String text;
         try {
@@ -248,23 +253,23 @@ public class Ingestor {
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(head)).toString();
         } catch (CharacterCodingException e) {
-            return "binary";
+            return FileKind.BINARY;
         }
         if (text.startsWith("BEGIN:VCARD")) {
-            return "vcf";
+            return FileKind.VCF;
         }
         if (text.startsWith("BEGIN:VCALENDAR")) {
-            return "ics";
+            return FileKind.ICS;
         }
         if (EMAIL_HEADERS.matcher(text).find() && EMAIL_KEY_HEADER.matcher(text).find()) {
-            return "eml";
+            return FileKind.EML;
         }
-        return "text";
+        return FileKind.TEXT;
     }
 
     private static List<String> zipNames(byte[] data) {
         try {
-            List<String> names = new ArrayList<String>();
+            List<String> names = new ArrayList<>();
             ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(data), StandardCharsets.ISO_8859_1);
             ZipEntry e;
             while ((e = zin.getNextEntry()) != null) {

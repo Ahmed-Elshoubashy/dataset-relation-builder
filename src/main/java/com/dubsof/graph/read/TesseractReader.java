@@ -1,5 +1,6 @@
 package com.dubsof.graph.read;
 
+import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.util.Text;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -39,9 +40,9 @@ public class TesseractReader implements TextReader {
         return "tesseract";
     }
 
-    public String read(byte[] data, String kind, String filename) throws Exception {
-        if (!kind.equals("pdf")) {
-            File img = File.createTempFile("ocr", "." + kind);
+    public String read(byte[] data, FileKind kind, String filename) throws Exception {
+        if (kind != FileKind.PDF) {
+            File img = File.createTempFile("ocr", "." + kind.value());
             try {
                 Files.write(img.toPath(), data);
                 return ocr(img);

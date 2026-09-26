@@ -2,6 +2,7 @@ package com.dubsof.graph.relate;
 
 import com.dubsof.graph.Config;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.ingest.FileStatus;
 import com.dubsof.graph.resolve.NameMatcher;
 import com.dubsof.graph.util.Json;
 
@@ -129,7 +130,7 @@ public class Relator {
             linked.get(f).add(Db.id(r.get("entity_id")));
         }
         int added = 0;
-        for (Map<String, Object> f : Db.query(conn, "SELECT id, text FROM files WHERE status='ok' AND text IS NOT NULL")) {
+        for (Map<String, Object> f : Db.query(conn, "SELECT id, text FROM files WHERE status=? AND text IS NOT NULL", FileStatus.OK.value())) {
             long fileId = Db.id(f.get("id"));
             Long doc = docOfFile.get(fileId);
             if (doc == null) {

@@ -2,6 +2,8 @@ package com.dubsof.graph.extract;
 
 import com.dubsof.graph.Config;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.ingest.FileKind;
+import com.dubsof.graph.ingest.FileStatus;
 import com.dubsof.graph.ingest.Ingestor;
 import com.dubsof.graph.util.Json;
 import com.dubsof.graph.util.Text;
@@ -92,7 +94,7 @@ public class Extractor {
         String text = row.text == null ? "" : row.text;
         String stem = stem(row.path);
 
-        if ("ok".equals(row.status)) {
+        if (row.status == FileStatus.OK) {
             for (Parser parser : parsers) {
                 if (parser.parse(ex, row, text, folderCompany, project)) {
                     break;
@@ -102,9 +104,9 @@ public class Extractor {
         if (ex.doc == null) {
             // Unread (needs OCR / corrupt / empty) or unrecognised: fall back to the filename.
             String[] fd = filenameDoc(stem);
-            if (!"ok".equals(row.status) || fd[0] != null || !Text.isBlank(text)) {
+            if (row.status != FileStatus.OK || fd[0] != null || !Text.isBlank(text)) {
                 document(ex, row, fd[1], fd[0], fd[0] != null ? fd[0] : stem,
-                        "unread", "ok".equals(row.status) ? null : Boolean.TRUE);
+                        "unread", row.status == FileStatus.OK ? null : Boolean.TRUE);
             }
         }
         if (ex.doc == null) {
@@ -453,7 +455,7 @@ public class Extractor {
     }
 
     private boolean email(Extraction ex, FileRow row, String text, Integer folderCompany) {
-        if (!"eml".equals(row.kind)) {
+        if (row.kind != FileKind.EML) {
             return false;
         }
         int split = text.indexOf("\n\n");
@@ -503,7 +505,7 @@ public class Extractor {
     }
 
     private boolean vcard(Extraction ex, FileRow row, String text) {
-        if (!"vcf".equals(row.kind)) {
+        if (row.kind != FileKind.VCF) {
             return false;
         }
         String fn = field(text, "FN", "(.+)");
@@ -522,7 +524,7 @@ public class Extractor {
     }
 
     private boolean calendar(Extraction ex, FileRow row, String text, Integer folderCompany) {
-        if (!"ics".equals(row.kind)) {
+        if (row.kind != FileKind.ICS) {
             return false;
         }
         String summary = orEmpty(field(text, "SUMMARY", "(.+)"));
@@ -802,7 +804,8 @@ public class Extractor {
     /** Extracts every readable file and stores mentions, facts and issues. */
     public static Map<String, Integer> run(Connection conn) throws Exception {
         Extractor extractor = new Extractor();
-        List<Map<String, Object>> rows = Db.query(conn, "SELECT * FROM files WHERE status != 'skipped' AND kind NOT IN ('zip')");
+        List<Map<String, Object>> rows = Db.query(conn, "SELECT * FROM files WHERE status != ? AND kind != ?",
+                FileStatus.SKIPPED.value(), FileKind.ZIP.value());
         Map<Long, Long> docMentionOfFile = new HashMap<Long, Long>();
         List<FileRow> files = new ArrayList<FileRow>();
         int mentions = 0;
@@ -854,23 +857,26 @@ public class Extractor {
     }
 
     private static void fileIssues(Connection conn) throws Exception {
-        Map<String, String> extKinds = new HashMap<String, String>();
-        extKinds.put(".pdf", "pdf");
-        extKinds.put(".docx", "docx");
-        extKinds.put(".xlsx", "xlsx");
-        extKinds.put(".png", "png");
-        extKinds.put(".jpg", "jpg");
-        extKinds.put(".eml", "eml");
-        for (Map<String, Object> r : Db.query(conn, "SELECT id, ext, kind, status, error, size FROM files WHERE status != 'skipped'")) {
+        Map<String, FileKind> extKinds = new HashMap<String, FileKind>();   // extension -> the kind it promises
+        extKinds.put(".pdf", FileKind.PDF);
+        extKinds.put(".docx", FileKind.DOCX);
+        extKinds.put(".xlsx", FileKind.XLSX);
+        extKinds.put(".png", FileKind.PNG);
+        extKinds.put(".jpg", FileKind.JPG);
+        extKinds.put(".eml", FileKind.EML);
+        for (Map<String, Object> r : Db.query(conn, "SELECT id, ext, kind, status, error, size FROM files WHERE status != ?",
+                FileStatus.SKIPPED.value())) {
             String ext = (String) r.get("ext");
-            if (ext != null && extKinds.containsKey(ext) && !extKinds.get(ext).equals(r.get("kind"))) {
+            FileKind kind = FileKind.fromValue((String) r.get("kind"));
+            FileStatus status = FileStatus.fromValue((String) r.get("status"));
+            if (ext != null && extKinds.containsKey(ext) && extKinds.get(ext) != kind) {
                 Db.update(conn, "INSERT INTO issues (kind, severity, detail, file_id) VALUES ('mislabelled','info',?,?)",
-                        "extension " + ext + " but content is " + r.get("kind"), r.get("id"));
+                        "extension " + ext + " but content is " + kind.value(), r.get("id"));
             }
-            if ("corrupt".equals(r.get("status")) || Db.id(r.get("size")) == 0) {
+            if (status == FileStatus.CORRUPT || Db.id(r.get("size")) == 0) {
                 Db.update(conn, "INSERT INTO issues (kind, severity, detail, file_id) VALUES ('unreadable','error',?,?)",
                         r.get("error") != null ? r.get("error") : "empty file (0 bytes)", r.get("id"));
-            } else if ("needs_ocr".equals(r.get("status"))) {
+            } else if (status == FileStatus.NEEDS_OCR) {
                 Db.update(conn, "INSERT INTO issues (kind, severity, detail, file_id) VALUES ('needs_ocr','info',?,?)",
                         "image-only; content not read (enable an OCR backend)", r.get("id"));
             }

@@ -15,6 +15,7 @@ import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.TextBlockParam;
 import com.dubsof.graph.Config;
+import com.dubsof.graph.ingest.FileKind;
 
 import java.util.Arrays;
 import java.util.Base64;
@@ -49,17 +50,17 @@ public class ClaudeReader implements TextReader {
         return "claude";
     }
 
-    public String read(byte[] data, String kind, String filename) {
+    public String read(byte[] data, FileKind kind, String filename) {
         String b64 = Base64.getEncoder().encodeToString(data);
         ContentBlockParam block;
-        if (kind.equals("pdf")) {
+        if (kind == FileKind.PDF) {
             block = ContentBlockParam.ofDocument(DocumentBlockParam.builder()
                     .source(Base64PdfSource.builder().data(b64).build()).build());
-        } else if (kind.equals("png") || kind.equals("jpg")) {
+        } else if (kind == FileKind.PNG || kind == FileKind.JPG) {
             block = ContentBlockParam.ofImage(ImageBlockParam.builder()
                     .source(Base64ImageSource.builder()
                             .data(b64)
-                            .mediaType(kind.equals("png") ? Base64ImageSource.MediaType.IMAGE_PNG : Base64ImageSource.MediaType.IMAGE_JPEG)
+                            .mediaType(kind == FileKind.PNG ? Base64ImageSource.MediaType.IMAGE_PNG : Base64ImageSource.MediaType.IMAGE_JPEG)
                             .build())
                     .build());
         } else {
