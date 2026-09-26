@@ -12,6 +12,7 @@ import com.dubsof.graph.extract.parsers.CertificateParser;
 import com.dubsof.graph.extract.parsers.ContractParser;
 import com.dubsof.graph.extract.parsers.DrawingParser;
 import com.dubsof.graph.extract.parsers.EmailParser;
+import com.dubsof.graph.extract.parsers.FilenameDocument;
 import com.dubsof.graph.extract.parsers.ItemListParser;
 import com.dubsof.graph.extract.parsers.LetterParser;
 import com.dubsof.graph.extract.parsers.ManualParser;
@@ -171,11 +172,9 @@ public class Extractor {
      * with no document number in its name and no text, which has nothing to say.
      */
     private void addDocumentFromFilename(Extraction ex, FileRow row, String text, String stem) {
-        String[] fromName = filenameDoc(stem);   // {number, document type, company}, nulls when not a numbered name
-        String number = fromName[0];
-        String docType = fromName[1];
-        if (row.status != FileStatus.OK || number != null || !Text.isBlank(text)) {
-            document(ex, row, docType, number, number != null ? number : stem,
+        FilenameDocument fromName = filenameDoc(stem);
+        if (row.status != FileStatus.OK || fromName.number != null || !Text.isBlank(text)) {
+            document(ex, row, fromName.docType, fromName.number, fromName.number != null ? fromName.number : stem,
                     "unread", row.status == FileStatus.OK ? null : Boolean.TRUE);
         }
     }
@@ -186,7 +185,7 @@ public class Extractor {
      * ("GB-40_—_Datasheet_2") is the product the document DESCRIBES.
      */
     private void addFilenameHints(Extraction ex, String stem) {
-        String filenameCompany = filenameDoc(stem)[2];
+        String filenameCompany = filenameDoc(stem).company;
         if (filenameCompany != null) {
             Integer company = ex.addMentionWithConfidence(EntityType.COMPANY, filenameCompany, MentionRole.FILENAME,
                     FILENAME_COMPANY_CONFIDENCE, "truncated", Boolean.TRUE);

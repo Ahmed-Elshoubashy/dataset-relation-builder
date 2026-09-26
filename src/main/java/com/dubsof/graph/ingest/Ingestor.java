@@ -160,28 +160,39 @@ public class Ingestor {
         }
     }
 
+    /** One file inside a zip: its path within the zip and its bytes. */
+    private static final class ZipMember {
+        final String name;
+        final byte[] bytes;
+
+        ZipMember(String name, byte[] bytes) {
+            this.name = name;
+            this.bytes = bytes;
+        }
+    }
+
     private void expandZip(String rel, byte[] data, long id, FolderContext ctx) throws Exception {
-        List<Object[]> members;
+        List<ZipMember> members;
         try {
             members = readZip(data, StandardCharsets.UTF_8);
 
         } catch (IllegalArgumentException badName) {
             members = readZip(data, Charset.forName("CP437"));
         }
-        for (Object[] m : members) {
-            add(rel + MEMBER_SEP + m[0], (byte[]) m[1], null, id, ctx);
+        for (ZipMember member : members) {
+            add(rel + MEMBER_SEP + member.name, member.bytes, null, id, ctx);
         }
     }
 
-    private static List<Object[]> readZip(byte[] data, Charset charset) throws IOException {
-        List<Object[]> files = new ArrayList<>();
+    private static List<ZipMember> readZip(byte[] data, Charset charset) throws IOException {
+        List<ZipMember> files = new ArrayList<>();
         try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(data), charset)) {
             ZipEntry zipEntry = zin.getNextEntry();
             while (zipEntry != null) {
                 // Skip folders, and the hidden "__MACOSX/" folder that macOS's "Compress" adds to zips:
                 // it only holds "._<name>" metadata copies of the real files, not documents.
                 if (!zipEntry.isDirectory() && !zipEntry.getName().startsWith("__MACOSX")) {
-                    files.add(new Object[] { zipEntry.getName(), Text.readAll(zin) });
+                    files.add(new ZipMember(zipEntry.getName(), Text.readAll(zin)));
                 }
                 zipEntry = zin.getNextEntry();
             }

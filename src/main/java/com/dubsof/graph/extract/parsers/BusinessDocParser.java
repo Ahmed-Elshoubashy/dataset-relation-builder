@@ -57,9 +57,9 @@ public class BusinessDocParser implements Parser {
         if (header == null && number == null) {
             return false;
         }
-        String[] fd = filenameDoc(stem(row.path));
-        String key = number != null ? number : fd[0];
-        String docType = header != null ? header : fd[1];
+        FilenameDocument fromName = filenameDoc(stem(row.path));
+        String key = number != null ? number : fromName.number;
+        String docType = header != null ? header : fromName.docType;
         String date = field(text, "Date", "(" + DATE + ")");
         String job = field(text, "Job", "(.+)");
         String quoteRef = field(text, "Quote Ref", "(QUO-\\d+)");

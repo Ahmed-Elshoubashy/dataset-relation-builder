@@ -132,18 +132,18 @@ public final class ParserUtils {
         return s.replaceAll("^[ _-]+|[ _-]+$", "");
     }
 
-    /** INV-8002_Acme Corporation -> {"INV-8002", "invoice", "Acme Corporation"}; nulls when not a numbered document. */
-    public static String[] filenameDoc(String stem) {
+    /** INV-8002_Acme Corporation -> number "INV-8002", type "invoice", company "Acme Corporation"; all null when not numbered. */
+    public static FilenameDocument filenameDoc(String stem) {
         Matcher m = Pattern.compile("^(INV|QUO|PO|DN|DWG|CAL)-(\\d+)(?:[_ ](.*))?$").matcher(stem);
         if (!m.matches()) {
-            return new String[3];
+            return new FilenameDocument(null, null, null);
         }
         String rest = m.group(3) == null ? "" : m.group(3).trim();
         String company = null;
         if (!rest.isEmpty() && !Pattern.compile("^(Rev\\w+|Calibration|v\\d+|FINAL|revised.*)$", Pattern.CASE_INSENSITIVE).matcher(rest).matches()) {
             company = rest;
         }
-        return new String[] {m.group(1) + "-" + m.group(2), PREFIX_TYPES.get(m.group(1)), company};
+        return new FilenameDocument(m.group(1) + "-" + m.group(2), PREFIX_TYPES.get(m.group(1)), company);
     }
 
     public static String orEmpty(String s) {

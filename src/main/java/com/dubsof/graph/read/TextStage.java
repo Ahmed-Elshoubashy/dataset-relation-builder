@@ -52,6 +52,19 @@ public class TextStage {
     private static final FilesDao filesDao = new FilesDao();
     private static final Pattern PHOTO_NAME = Pattern.compile("^(IMG|MKT)_\\d+\\.jpe?g$", Pattern.CASE_INSENSITIVE);
 
+    /** What one OCR worker returns for one file: exactly one of text / error is set. */
+    private static final class OcrResult {
+        final long fileId;
+        final String text;
+        final String error;
+
+        OcrResult(long fileId, String text, String error) {
+            this.fileId = fileId;
+            this.text = text;
+            this.error = error;
+        }
+    }
+
     /** Thrown by a native parser when the file has no text layer. */
     static class NeedsOcr extends Exception {
     }
@@ -136,22 +149,18 @@ public class TextStage {
         
         ExecutorService pool = Executors.newFixedThreadPool(Config.OCR_WORKERS);
         try {
-            CompletionService<String[]> done = new ExecutorCompletionService<>(pool);
+            CompletionService<OcrResult> done = new ExecutorCompletionService<>(pool);
             
             for (final FileRow row : queue) {
                 done.submit(new Callable<>() {
-                    /**
-                     * Returns {file id, text, error}: exactly one of text / error is set.
-                     */
-                    public String[] call() {
-                        String id = String.valueOf(row.id);
+                    public OcrResult call() {
                         try {
                             byte[] data = Files.readAllBytes(new File(row.blobPath).toPath());
                             String text = reader.readWithHash(row.sha256, data, row.kind, row.path);
-                            return new String[] { id, text, null };
-                            
+                            return new OcrResult(row.id, text, null);
+
                         } catch (Exception e) {
-                            return new String[] { id, null, "OCR failed: " + e.getMessage() };
+                            return new OcrResult(row.id, null, "OCR failed: " + e.getMessage());
                         }
                     }
                 });
@@ -159,15 +168,15 @@ public class TextStage {
             
             // results are written from this thread only: SQLite likes a single writer
             for (int i = 1; i <= queue.size(); i++) {
-                String[] r = done.take().get();
-                
-                if (r[2] == null) {
-                    filesDao.updateText(conn, Long.parseLong(r[0]), r[1], reader.backend().textSource(),
-                            Text.isBlank(r[1]) ? FileStatus.EMPTY : FileStatus.OK);
+                OcrResult result = done.take().get();
+
+                if (result.error == null) {
+                    filesDao.updateText(conn, result.fileId, result.text, reader.backend().textSource(),
+                            Text.isBlank(result.text) ? FileStatus.EMPTY : FileStatus.OK);
                     increment(stats, "ocr");
-                    
+
                 } else {   // stays waiting for the next OCR run
-                    filesDao.updateStatus(conn, Long.parseLong(r[0]), FileStatus.NEEDS_OCR, Text.truncate(r[2], 500));
+                    filesDao.updateStatus(conn, result.fileId, FileStatus.NEEDS_OCR, Text.truncate(result.error, 500));
                 }
                 if (i % 5 == 0 || i == queue.size()) {
                     Db.commit(conn);

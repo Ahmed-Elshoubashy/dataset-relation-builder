@@ -30,8 +30,18 @@ public final class OwnerDetector {
     private OwnerDetector() {
     }
 
-    /** Returns {owner name or null, owner domain or null}. */
-    public static String[] detect(Connection conn) throws Exception {
+    /** The detected owner: the company name on the letterheads and the main e-mail domain; either can be null. */
+    public static final class Owner {
+        public final String name;
+        public final String domain;
+
+        Owner(String name, String domain) {
+            this.name = name;
+            this.domain = domain;
+        }
+    }
+
+    public static Owner detect(Connection conn) throws Exception {
         Map<String, Integer> heads = new LinkedHashMap<String, Integer>();
         int pdfs = 0;
         for (FileRow f : filesDao.findTexts(conn, FileKind.PDF, FileStatus.OK, TextSource.NATIVE)) {
@@ -64,7 +74,7 @@ public final class OwnerDetector {
                 domain = e.getKey();
             }
         }
-        return new String[] {name, domain};
+        return new Owner(name, domain);
     }
 
     private static void count(Map<String, Integer> m, String key) {

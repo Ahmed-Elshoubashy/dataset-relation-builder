@@ -100,14 +100,14 @@ public final class Pipeline {
      * Not stored: rebuild/ocr detect it again from the text already in the database.
      */
     public static void detectOwner(Connection conn, Progress progress) throws Exception {
-        String[] detected = OwnerDetector.detect(conn);
-        if (detected[0] != null) {
-            Config.ownerName = detected[0];
-        } else if (detected[1] != null) {
-            Config.ownerName = detected[1];
+        OwnerDetector.Owner detected = OwnerDetector.detect(conn);
+        if (detected.name != null) {
+            Config.ownerName = detected.name;
+        } else if (detected.domain != null) {
+            Config.ownerName = detected.domain;   // no letterhead found: name the owner after its e-mail domain
         }
-        if (detected[1] != null) {
-            Config.ownerDomain = detected[1];
+        if (detected.domain != null) {
+            Config.ownerDomain = detected.domain;
         }
         progress.update(2, "read", "Owner organisation: " + Config.ownerName);
     }
