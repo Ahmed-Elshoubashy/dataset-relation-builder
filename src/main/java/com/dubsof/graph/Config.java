@@ -1,6 +1,5 @@
 package com.dubsof.graph;
 
-import com.dubsof.graph.read.OcrBackend;
 import com.dubsof.graph.resolve.AdjudicatorType;
 
 import java.io.File;
@@ -20,8 +19,6 @@ public final class Config {
     public static final File OCR_CACHE_FILE = new File(WORK_DIR, "ocr_cache.db");
     public static final File BLOB_DIR = new File(WORK_DIR, "blobs");
 
-    /** Which TextReader handles image-only files: "claude", "tesseract" or "none". */
-    public static final OcrBackend OCR_BACKEND = OcrBackend.fromValue(env("ERKG_OCR", apiKeyFromEnv() != null ? "claude" : "none"));
     public static final int OCR_WORKERS = Integer.parseInt(env("ERKG_OCR_WORKERS", "8"));
     public static final String CLAUDE_MODEL = env("ERKG_CLAUDE_MODEL", "claude-opus-5");
 

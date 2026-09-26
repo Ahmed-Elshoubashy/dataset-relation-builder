@@ -11,21 +11,18 @@ Same pipeline, same SQLite schema and same JSON API as the Python version, so th
 
 ```bash
 ./gradlew installDist
-build/install/entity-grapgh-resolver/bin/entity-grapgh-resolver serve      # http://localhost:8765
+build/install/entity-grapgh-resolver/bin/entity-grapgh-resolver      # http://localhost:8765
 ```
 
 Then click **Analyse dataset**, choose the folder, choose how scans are read (none / Tesseract / Claude + API key) and press **Analyse**.
 
-From the command line:
+Tests:
 
 ```bash
-./gradlew run --args="run --data ../../john-doe --ocr none"   # full analysis
-./gradlew run --args="rebuild"                                # re-run stages 3-5 on files already read
-./gradlew run --args="ocr --ocr claude"                       # OCR files still waiting, then rebuild
 ./gradlew test
 ```
 
-Settings are environment variables: `ERKG_DATA_ROOT`, `ERKG_WORK_DIR` (default `data`), `ERKG_OCR`,
+Settings are environment variables: `ERKG_DATA_ROOT`, `ERKG_WORK_DIR` (default `data`),
 `ERKG_OCR_WORKERS`, `ERKG_CLAUDE_MODEL`, `ERKG_ADJUDICATOR`, `ANTHROPIC_API_KEY`, `PORT`.
 
 ## Docker
