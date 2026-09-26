@@ -5,7 +5,7 @@ package com.dubsof.graph.resolve;
  * Each constant keeps the text used in the environment variable.
  */
 public enum AdjudicatorType {
-    /** Keep borderline pairs apart and record them as "possible_alias" findings. */
+    /** Keep borderline pairs apart. */
     RULES("rules"),
     /** Ask Claude (needs ANTHROPIC_API_KEY). */
     CLAUDE("claude");

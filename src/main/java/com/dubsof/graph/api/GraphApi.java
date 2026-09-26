@@ -4,7 +4,6 @@ import com.dubsof.graph.dao.AliasesDao;
 import com.dubsof.graph.dao.EntitiesDao;
 import com.dubsof.graph.dao.FilesDao;
 import com.dubsof.graph.dao.GraphQueries;
-import com.dubsof.graph.dao.IssuesDao;
 import com.dubsof.graph.dao.MentionsDao;
 import com.dubsof.graph.dao.MetaDao;
 import com.dubsof.graph.dao.RelationsDao;
@@ -12,7 +11,6 @@ import com.dubsof.graph.dao.row.AliasRow;
 import com.dubsof.graph.dao.row.EntityRow;
 import com.dubsof.graph.dao.row.FileMentionRow;
 import com.dubsof.graph.dao.row.FileRow;
-import com.dubsof.graph.dao.row.IssueRow;
 import com.dubsof.graph.dao.row.RelatedEntityRow;
 import com.dubsof.graph.dao.row.RelationRow;
 import com.dubsof.graph.dao.row.SourceRow;
@@ -48,7 +46,6 @@ public class GraphApi {
     private final MentionsDao mentionsDao = new MentionsDao();
     private final RelationsDao relationsDao = new RelationsDao();
     private final AliasesDao aliasesDao = new AliasesDao();
-    private final IssuesDao issuesDao = new IssuesDao();
     private final MetaDao metaDao = new MetaDao();
 
     private final Connection conn;
@@ -63,7 +60,6 @@ public class GraphApi {
         out.put("relations", relationsDao.count(conn));
         out.put("mentions", mentionsDao.countResolved(conn));
         out.put("files", filesDao.countsByStatus(conn));
-        out.put("issues", issuesDao.countsByKind(conn));
         out.put("resolution_methods", mentionsDao.countsByMethod(conn));
         out.put("meta", metaDao.findAll(conn));
         return out;
@@ -104,16 +100,6 @@ public class GraphApi {
         out.put("aliases", aliasMaps(aliasesDao.findByEntity(conn, id)));
         out.put("relations", relatedMaps(graphQueries.findRelated(conn, id)));
         out.put("sources", sourceMaps(graphQueries.findSources(conn, id, MAX_SOURCES)));
-        List<Map<String, Object>> issues = new ArrayList<Map<String, Object>>();
-        for (IssueRow i : graphQueries.findEntityIssues(conn, id)) {
-            Map<String, Object> m = new LinkedHashMap<String, Object>();
-            m.put("kind", i.kind);
-            m.put("severity", i.severity);
-            m.put("detail", i.detail);
-            m.put("file_id", i.fileId);
-            issues.add(m);
-        }
-        out.put("issues", issues);
         return out;
     }
 
@@ -159,24 +145,6 @@ public class GraphApi {
         out.put("nodes", nodeMaps);
         out.put("edges", edges);
         out.put("center", center);
-        return out;
-    }
-
-    public List<Map<String, Object>> issues(String kind, int limit) throws Exception {
-        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
-        for (IssueRow i : graphQueries.findIssues(conn, kind, limit)) {
-            Map<String, Object> m = new LinkedHashMap<String, Object>();
-            m.put("id", i.id);
-            m.put("kind", i.kind);
-            m.put("severity", i.severity);
-            m.put("detail", i.detail);
-            m.put("file_id", i.fileId);
-            m.put("entity_id", i.entityId);
-            m.put("path", i.path);
-            m.put("entity_name", i.entityName);
-            m.put("entity_type", i.entityType);
-            out.add(m);
-        }
         return out;
     }
 
@@ -226,15 +194,6 @@ public class GraphApi {
             mentions.add(mm);
         }
         d.put("mentions", mentions);
-        List<Map<String, Object>> issues = new ArrayList<Map<String, Object>>();
-        for (IssueRow i : issuesDao.findByFile(conn, id)) {
-            Map<String, Object> m = new LinkedHashMap<String, Object>();
-            m.put("kind", i.kind);
-            m.put("severity", i.severity);
-            m.put("detail", i.detail);
-            issues.add(m);
-        }
-        d.put("issues", issues);
         return d;
     }
 

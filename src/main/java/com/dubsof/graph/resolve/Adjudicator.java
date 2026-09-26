@@ -4,8 +4,8 @@ import com.dubsof.graph.extract.EntityType;
 
 /**
  * Second opinion on borderline matches (score between GRAY and ACCEPT in the Resolver).
- * The default RuleAdjudicator keeps borderline pairs apart and records them as
- * "possible_alias" findings; ClaudeAdjudicator (ERKG_ADJUDICATOR=claude) asks Claude.
+ * The default RuleAdjudicator keeps borderline pairs apart; ClaudeAdjudicator
+ * (ERKG_ADJUDICATOR=claude) asks Claude.
  */
 public interface Adjudicator {
 

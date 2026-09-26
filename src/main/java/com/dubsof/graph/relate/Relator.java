@@ -2,11 +2,9 @@ package com.dubsof.graph.relate;
 
 import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.AliasesDao;
-import com.dubsof.graph.dao.ConsistencyChecks;
 import com.dubsof.graph.dao.EntitiesDao;
 import com.dubsof.graph.dao.FactsDao;
 import com.dubsof.graph.dao.FilesDao;
-import com.dubsof.graph.dao.IssuesDao;
 import com.dubsof.graph.dao.MentionsDao;
 import com.dubsof.graph.dao.RelationsDao;
 import com.dubsof.graph.dao.row.AliasRow;
@@ -14,8 +12,6 @@ import com.dubsof.graph.dao.row.EntityFactRow;
 import com.dubsof.graph.dao.row.EntityRow;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.dao.row.MentionRow;
-import com.dubsof.graph.dao.row.MisfiledDocumentRow;
-import com.dubsof.graph.dao.row.MultiCustomerDocumentRow;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.MentionRole;
@@ -51,9 +47,7 @@ public class Relator {
     private final MentionsDao mentionsDao = new MentionsDao();
     private final AliasesDao aliasesDao = new AliasesDao();
     private final EntitiesDao entitiesDao = new EntitiesDao();
-    private final IssuesDao issuesDao = new IssuesDao();
     private final FilesDao filesDao = new FilesDao();
-    private final ConsistencyChecks consistencyChecks = new ConsistencyChecks();
 
     private final Connection conn;
 
@@ -83,7 +77,7 @@ public class Relator {
         int gazetteer = gazetteer();
         relationsDao.deriveShortcuts(conn);
         int pruned = pruneOrphans();
-        checks();
+        markMissingDocuments();
         Db.commit(conn);
         Map<String, Integer> stats = new LinkedHashMap<String, Integer>();
         stats.put("relations", (int) relationsDao.count(conn));
@@ -184,46 +178,15 @@ public class Relator {
         for (EntityRow e : orphans) {
             mentionsDao.unlinkEntity(conn, e.id, "orphan");
             aliasesDao.deleteByEntity(conn, e.id);
-            issuesDao.deleteByEntity(conn, e.id);
             entitiesDao.delete(conn, e.id);
         }
         return orphans.size();
     }
 
-    @SuppressWarnings("unchecked")
-    private void checks() throws Exception {
-        EntityRow owner = entitiesDao.findByTypeAndKey(conn, EntityType.COMPANY, NameMatcher.companyKey(Config.ownerName));
-        long ownerId = owner == null ? 0 : owner.id;
-        // referenced but never found as a file
-        for (EntityRow d : consistencyChecks.findDocumentsWithoutFile(conn)) {
-            entitiesDao.markMissing(conn, d.id);
-            issue("missing_document", "info", d.key + " is referenced but no copy was found", d.id);
+    /** Documents that other files reference (e.g. "Quote Ref: QUO-5238") but that no file is: marked missing. */
+    private void markMissingDocuments() throws Exception {
+        for (EntityRow document : entitiesDao.findReferencedDocumentsWithoutFile(conn)) {
+            entitiesDao.markMissing(conn, document.id);
         }
-        // one document number billed to two different customers
-        for (MultiCustomerDocumentRow d : consistencyChecks.findMultiCustomerDocuments(conn)) {
-            issue("conflict", "warn", d.documentKey + " is issued to more than one company: " + d.companies, d.documentId);
-        }
-        // copies of the same number disagreeing on totals / dates
-        for (EntityRow d : consistencyChecks.findDocumentsWithConflicts(conn)) {
-            Map<String, Object> conflicts = (Map<String, Object>) d.attrs.get("conflicts");
-            StringBuilder detail = new StringBuilder();
-            for (Map.Entry<String, Object> c : conflicts.entrySet()) {
-                detail.append(detail.length() == 0 ? "" : "; ").append(c.getKey()).append(' ').append(c.getValue());
-            }
-            issue("version_conflict", "warn", d.key + ": copies disagree on " + detail, d.id);
-        }
-        // document filed under one customer's folder but addressed to another
-        for (MisfiledDocumentRow d : consistencyChecks.findMisfiledDocuments(conn, ownerId)) {
-            issue("misfiled", "warn", d.documentKey + " sits in " + d.folderCompany + "'s folder but is addressed to " + d.addressedTo,
-                    d.documentId);
-        }
-        // projects only known from a screenshot (not in the folder structure)
-        for (EntityRow p : consistencyChecks.findUnfiledProjects(conn)) {
-            issue("unfiled_project", "info", p.key + " appears in documents but has no project folder", p.id);
-        }
-    }
-
-    private void issue(String kind, String severity, String detail, long entityId) throws Exception {
-        issuesDao.insert(conn, kind, severity, detail, null, entityId);
     }
 }

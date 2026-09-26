@@ -5,7 +5,6 @@ import com.dubsof.graph.dao.AliasesDao;
 import com.dubsof.graph.dao.EntitiesDao;
 import com.dubsof.graph.dao.FactsDao;
 import com.dubsof.graph.dao.FilesDao;
-import com.dubsof.graph.dao.IssuesDao;
 import com.dubsof.graph.dao.MentionsDao;
 import com.dubsof.graph.dao.row.EntityRow;
 import com.dubsof.graph.dao.row.FactRow;
@@ -31,7 +30,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.TreeSet;
 
 /**
  * Stage 4: decide which real-world thing each mention refers to.
@@ -57,8 +55,6 @@ public class Resolver {
     static final double ACCEPT = 0.80;
     /** Between GRAY and ACCEPT, the Adjudicator decides; below GRAY, the name is a new company. */
     static final double GRAY = 0.65;
-    /** When the two best matches are closer than this, the match is reported as ambiguous. */
-    static final double AMBIGUOUS_MARGIN = 0.03;
 
     /** Facts whose other end names the customer (or product) a document belongs to. */
     private static final List<RelationType> COUNTERPARTY_RELATIONS = Arrays.asList(
@@ -72,7 +68,6 @@ public class Resolver {
     private final FactsDao factsDao = new FactsDao();
     private final EntitiesDao entitiesDao = new EntitiesDao();
     private final AliasesDao aliasesDao = new AliasesDao();
-    private final IssuesDao issuesDao = new IssuesDao();
 
     private final Connection conn;
     private final Adjudicator adjudicator;
@@ -249,14 +244,8 @@ public class Resolver {
         });
         CompanyCandidate best = candidates.isEmpty() ? null : candidates.get(0);
 
-        // Good enough: it is this company. Warn when a second company scored almost the same.
+        // Good enough: it is this company.
         if (best != null && best.score >= ACCEPT) {
-            CompanyCandidate runnerUp = candidates.size() > 1 ? candidates.get(1) : null;
-            if (runnerUp != null && best.score - runnerUp.score < AMBIGUOUS_MARGIN && !Match.Method.NORMALIZED.value().equals(best.method)) {
-                issue("ambiguous_match", "warn", "company '" + mention.surface + "' matches both '"
-                        + knownCompanies.get(best.companyId) + "' and '" + knownCompanies.get(runnerUp.companyId) + "'",
-                        mention.fileId, null);
-            }
             return new CompanyDecision(best.companyId, best.method, best.score);
         }
 
@@ -268,8 +257,6 @@ public class Resolver {
             if (verdict.same) {
                 return new CompanyDecision(best.companyId, "adjudicated:" + best.method, Math.min(best.score, verdict.confidence));
             }
-            issue("possible_alias", "info", String.format("'%s' may be '%s' (%s, %.2f); kept separate: %s",
-                    mention.surface, candidateName, best.method, best.score, verdict.reason), mention.fileId, best.companyId);
         }
 
         // No match: a new organisation (supplier, certification body, unknown customer, ...).
@@ -393,20 +380,10 @@ public class Resolver {
             }
 
             if (chosen == null) {
-                assignEntity(mention, null, "unresolved", 0);
-                if (!candidates.isEmpty()) {
-                    issue("ambiguous_project", "info", "job title '" + mention.surface + "' matches " + candidates.size()
-                            + " projects; no company context", mention.fileId, null);
-                }
+                assignEntity(mention, null, "unresolved", 0);   // no candidate, or several and no context
                 continue;
             }
             assignEntity(mention, chosen, method, method.contains("company") ? 0.9 : 0.75);
-
-            // the document talks about another project than the folder it is filed in
-            if (projectOfFolder != null && !chosen.equals(projectOfFolder)) {
-                issue("misfiled", "warn", "document is filed under " + filesById.get(mention.fileId).folderJob
-                        + " but refers to '" + mention.surface + "' of another project", mention.fileId, chosen);
-            }
         }
     }
 
@@ -542,10 +519,6 @@ public class Resolver {
                 confidence = 0.7;
             } else {
                 // unknown, or too many people with this name: a separate person with no organisation
-                if (candidates.size() > 1) {
-                    issue("ambiguous_person", "info", "'" + mention.surface + "' matches " + candidates.size()
-                            + " people at different organisations", mention.fileId, null);
-                }
                 personId = findOrCreateEntity(EntityType.PERSON, nameKey + "|?", mention.surface, new HashMap<>());
                 method = "new_unattributed";
                 confidence = 1.0;
@@ -604,13 +577,6 @@ public class Resolver {
         for (Map.Entry<String, Set<Long>> entry : counterpartiesOfKey.entrySet()) {
             if (entry.getValue().size() > 1 && entry.getKey().matches(DOCUMENT_NUMBER)) {
                 reusedNumbers.put(entry.getKey(), entry.getValue());
-                TreeSet<String> companyNames = new TreeSet<>();
-                for (Long counterpartyId : entry.getValue()) {
-                    companyNames.add(entitiesDao.findById(conn, counterpartyId).name);
-                }
-                issue("number_collision", "warn", entry.getKey() + " is used by " + entry.getValue().size()
-                        + " different documents (" + NameMatcher.join(new ArrayList<>(companyNames), ", ")
-                        + "); kept as separate documents", null, null);
             }
         }
 
@@ -817,10 +783,6 @@ public class Resolver {
         mention.confidence = confidence;
         String countKey = mention.etype.value() + ":" + method;
         methodCounts.put(countKey, methodCounts.containsKey(countKey) ? methodCounts.get(countKey) + 1 : 1);
-    }
-
-    private void issue(String kind, String severity, String detail, Long fileId, Long entityId) throws Exception {
-        issuesDao.insert(conn, kind, severity, detail, fileId, entityId);
     }
 
     /** The mentions of one entity type, in id order. */

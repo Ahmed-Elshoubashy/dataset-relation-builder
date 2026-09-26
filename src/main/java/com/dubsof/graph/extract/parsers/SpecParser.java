@@ -20,15 +20,11 @@ public class SpecParser implements Parser {
             return false;
         }
         Matcher no = Pattern.compile("Doc No:\\s*(\\S+)").matcher(text);
-        Matcher model = Pattern.compile("Model:\\s*(\\S+)").matcher(text);
         String docType = head.group(2).equals("Datasheet") ? "datasheet" : "specification";
         String key = no.find() ? no.group(1) : null;
         String titleCode = head.group(1);
         Integer doc = document(ex, row, docType, key, titleCode + " " + head.group(2) + (key != null ? " (" + key + ")" : ""));
         ex.fact(doc, RelationType.DESCRIBES, ex.addMention(EntityType.PRODUCT, titleCode, MentionRole.SPEC_TITLE, "code", titleCode));
-        if (model.find() && !model.group(1).equals(titleCode)) {
-            ex.issue("conflict", "info", "titled " + titleCode + " but body says Model: " + model.group(1));
-        }
         return true;
     }
 }

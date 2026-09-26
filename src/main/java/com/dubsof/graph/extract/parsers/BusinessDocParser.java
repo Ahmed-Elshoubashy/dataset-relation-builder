@@ -60,9 +60,6 @@ public class BusinessDocParser implements Parser {
         String[] fd = filenameDoc(stem(row.path));
         String key = number != null ? number : fd[0];
         String docType = header != null ? header : fd[1];
-        if (fd[0] != null && number != null && !fd[0].equals(number)) {
-            ex.issue("filename_mismatch", "warn", "filename says " + fd[0] + " but document says " + number);
-        }
         String date = field(text, "Date", "(" + DATE + ")");
         String job = field(text, "Job", "(.+)");
         String quoteRef = field(text, "Quote Ref", "(QUO-\\d+)");
@@ -88,22 +85,6 @@ public class BusinessDocParser implements Parser {
             } else if (t.matches()) {
                 totals.put(t.group(1).split(" ")[0].toLowerCase(), money(t.group(2)));
             }
-        }
-        if (Pattern.compile("·[\\d,]+\\.\\d{2}").matcher(text).find()) {
-            ex.issue("encoding", "info", "currency symbol garbled ('·' instead of '£')");
-        }
-        double sum = 0;
-        for (Map<String, Object> it : items) {
-            int qty = (Integer) it.get("qty");
-            double price = (Double) it.get("price");
-            double total = (Double) it.get("total");
-            sum += total;
-            if (Math.abs(qty * price - total) > 0.02) {
-                ex.issue("arithmetic", "warn", String.format("%s: %d x %.2f != %.2f", it.get("desc"), qty, price, total));
-            }
-        }
-        if (!items.isEmpty() && totals.containsKey("subtotal") && Math.abs(sum - totals.get("subtotal")) > 0.02) {
-            ex.issue("arithmetic", "warn", String.format("line totals sum to %.2f, subtotal says %.2f", sum, totals.get("subtotal")));
         }
 
         Integer doc = document(ex, row, docType, key, key, "date", date, "job_title", job,

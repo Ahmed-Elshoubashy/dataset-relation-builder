@@ -2,7 +2,6 @@ package com.dubsof.graph.dao;
 
 import com.dubsof.graph.dao.row.EntityRow;
 import com.dubsof.graph.dao.row.FileMentionRow;
-import com.dubsof.graph.dao.row.IssueRow;
 import com.dubsof.graph.dao.row.RelatedEntityRow;
 import com.dubsof.graph.dao.row.RelationRow;
 import com.dubsof.graph.dao.row.SourceRow;
@@ -58,11 +57,6 @@ public class GraphQueries {
                     + " FROM mentions m JOIN files f ON f.id = m.file_id WHERE m.entity_id = ?"
                     + " ORDER BY m.role = 'self' DESC, f.path LIMIT ?";
 
-    /** Findings about an entity or about the file that is the entity. */
-    private static final String ENTITY_ISSUES =
-            "SELECT DISTINCT i.kind, i.severity, i.detail, i.file_id FROM issues i"
-                    + " WHERE i.entity_id = ? OR i.file_id IN (SELECT file_id FROM mentions WHERE entity_id = ? AND role = 'self')";
-
     /** Customers and their filed projects (projects only seen in screenshots are left out). */
     private static final String OVERVIEW_NODE_IDS =
             "SELECT id FROM entities WHERE etype = 'project' AND json_extract(attrs, '$.source') = 'folder'"
@@ -83,13 +77,6 @@ public class GraphQueries {
             "SELECT * FROM relations"
                     + " WHERE src IN (SELECT value FROM json_each(?)) AND dst IN (SELECT value FROM json_each(?))"
                     + "   AND (? OR derived = 0) ORDER BY src, dst, rel";
-
-    /** Findings with the file path and entity name they point at; errors first. */
-    private static final String ISSUES =
-            "SELECT i.*, f.path, e.name AS entity_name, e.etype AS entity_type FROM issues i"
-                    + " LEFT JOIN files f ON f.id = i.file_id LEFT JOIN entities e ON e.id = i.entity_id"
-                    + " WHERE (? IS NULL OR i.kind = ?)"
-                    + " ORDER BY CASE i.severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, i.kind LIMIT ?";
 
     /** The entity whose name or aliases match a search most often. */
     private static final String BEST_MATCH_ID =
@@ -134,10 +121,6 @@ public class GraphQueries {
         return Db.list(conn, SOURCES, GraphQueries::mapSource, entityId, limit);
     }
 
-    public List<IssueRow> findEntityIssues(Connection conn, long entityId) throws SQLException {
-        return Db.list(conn, ENTITY_ISSUES, GraphQueries::mapEntityIssue, entityId, entityId);
-    }
-
     public List<Long> findOverviewNodeIds(Connection conn) throws SQLException {
         return Db.list(conn, OVERVIEW_NODE_IDS, GraphQueries::mapFirstLong);
     }
@@ -152,11 +135,6 @@ public class GraphQueries {
     public List<RelationRow> findRelationsAmong(Connection conn, Collection<Long> ids, boolean includeDerived) throws SQLException {
         String json = Json.write(ids);
         return Db.list(conn, RELATIONS_AMONG, RelationsDao::map, json, json, includeDerived ? 1 : 0);
-    }
-
-    /** @param kind finding kind, or null for all */
-    public List<IssueRow> findIssues(Connection conn, String kind, int limit) throws SQLException {
-        return Db.list(conn, ISSUES, GraphQueries::mapIssueWithNames, kind, kind, limit);
     }
 
     /** Id of the entity best matching {@code search}, or null. */
@@ -202,23 +180,6 @@ public class GraphQueries {
         s.method = rs.getString("method");
         s.confidence = Db.doubleOrNull(rs, "confidence");
         return s;
-    }
-
-    private static IssueRow mapEntityIssue(ResultSet rs) throws SQLException {
-        IssueRow i = new IssueRow();
-        i.kind = rs.getString("kind");
-        i.severity = rs.getString("severity");
-        i.detail = rs.getString("detail");
-        i.fileId = Db.longOrNull(rs, "file_id");
-        return i;
-    }
-
-    private static IssueRow mapIssueWithNames(ResultSet rs) throws SQLException {
-        IssueRow i = IssuesDao.map(rs);
-        i.path = rs.getString("path");
-        i.entityName = rs.getString("entity_name");
-        i.entityType = rs.getString("entity_type");
-        return i;
     }
 
     private static FileMentionRow mapFileMention(ResultSet rs) throws SQLException {

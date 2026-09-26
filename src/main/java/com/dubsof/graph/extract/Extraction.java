@@ -9,7 +9,7 @@ import java.util.Map;
 
 /**
  * Everything found in one file: mentions (raw references), facts (links between those
- * mentions) and data-quality issues. Mentions are referred to by their index in the list.
+ * mentions). Mentions are referred to by their index in the list.
  */
 public class Extraction {
 
@@ -45,7 +45,6 @@ public class Extraction {
     public final long fileId;
     public final List<Mention> mentions = new ArrayList<>();
     public final List<Fact> facts = new ArrayList<>();
-    public final List<String[]> issues = new ArrayList<>();   // {kind, severity, detail}
     /** Index of this file's own document mention. */
     public Integer doc;
 
@@ -97,10 +96,6 @@ public class Extraction {
         if (src != null && dst != null && !src.equals(dst)) {
             facts.add(new Fact(src, rel, dst));
         }
-    }
-
-    public void issue(String kind, String severity, String detail) {
-        issues.add(new String[] {kind, severity, detail});
     }
 
     public Mention docMention() {

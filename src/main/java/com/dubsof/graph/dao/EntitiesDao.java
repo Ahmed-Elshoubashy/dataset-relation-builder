@@ -22,6 +22,10 @@ public class EntitiesDao {
                     + " AND NOT EXISTS (SELECT 1 FROM relations r WHERE r.src = e.id OR r.dst = e.id) ORDER BY e.id";
     private static final String UPDATE_ATTRS = "UPDATE entities SET attrs = ? WHERE id = ?";
     private static final String UPDATE_NAME = "UPDATE entities SET name = ? WHERE id = ?";
+    /** Documents that other files reference but that no file is (no mention with role self). */
+    private static final String SELECT_REFERENCED_DOCUMENTS_WITHOUT_FILE =
+            "SELECT e.* FROM entities e WHERE e.etype = 'document'"
+                    + " AND NOT EXISTS (SELECT 1 FROM mentions m WHERE m.entity_id = e.id AND m.role = 'self') ORDER BY e.id";
     private static final String MARK_MISSING = "UPDATE entities SET attrs = json_set(attrs, '$.missing', 1) WHERE id = ?";
     private static final String DELETE = "DELETE FROM entities WHERE id = ?";
     private static final String COUNTS_BY_TYPE = "SELECT etype, COUNT(*) FROM entities GROUP BY etype";
@@ -52,6 +56,10 @@ public class EntitiesDao {
     }
 
     /** Flags a document that other documents reference but no copy of which was found. */
+    public List<EntityRow> findReferencedDocumentsWithoutFile(Connection conn) throws SQLException {
+        return Db.list(conn, SELECT_REFERENCED_DOCUMENTS_WITHOUT_FILE, EntitiesDao::map);
+    }
+
     public void markMissing(Connection conn, long id) throws SQLException {
         Db.update(conn, MARK_MISSING, id);
     }

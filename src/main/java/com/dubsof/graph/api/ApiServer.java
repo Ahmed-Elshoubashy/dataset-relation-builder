@@ -144,9 +144,6 @@ public class ApiServer {
                 return api.graph(center, depth, Math.min(intParam(q, "limit", 70), 600),
                         !"false".equals(q.get("derived")), q.get("types"));
             }
-            if (path.equals("/api/issues")) {
-                return api.issues(q.get("kind"), Math.min(intParam(q, "limit", 200), 2000));
-            }
             if (path.equals("/api/aliases")) {
                 return api.aliases(q.containsKey("q") ? q.get("q") : "");
             }

@@ -90,13 +90,6 @@ public final class Db {
             + " file_id INTEGER NOT NULL REFERENCES files(id),"
             + " PRIMARY KEY (relation_id, file_id))",
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)",   // dataset / settings of this graph
-        "CREATE TABLE IF NOT EXISTS issues ("
-            + " id INTEGER PRIMARY KEY,"
-            + " kind TEXT NOT NULL,"
-            + " severity TEXT NOT NULL,"             // info | warn | error
-            + " detail TEXT NOT NULL,"
-            + " file_id INTEGER REFERENCES files(id),"
-            + " entity_id INTEGER REFERENCES entities(id))",
     };
 
     /** Opens a database file. Writers get manual commits (much faster for bulk inserts). */
@@ -124,7 +117,6 @@ public final class Db {
         "DELETE FROM relation_evidence",
         "DELETE FROM relations",
         "DELETE FROM aliases",
-        "DELETE FROM issues",
         "DELETE FROM facts",
         "DELETE FROM mentions",
         "DELETE FROM entities",

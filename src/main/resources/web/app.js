@@ -152,15 +152,13 @@ async function expand(id) {
 /* ------------------------------------------------------------ sidebar */
 function renderTabs() {
   const counts = state.stats?.entities || {};
-  const issues = Object.values(state.stats?.issues || {}).reduce((a, b) => a + b, 0);
   $("#tabs").innerHTML = TYPES.map((t) =>
     `<button class="tab ${state.tab === t.key ? "active" : ""}" data-tab="${t.key}"><span class="dot ${t.key}" style="width:8px;height:8px;border-radius:50%;display:inline-block"></span>${t.label}<span class="n">${counts[t.key] ?? 0}</span></button>`
-  ).join("") + `<button class="tab ${state.tab === "issues" ? "active" : ""}" data-tab="issues">Findings<span class="n">${issues}</span></button>`;
+  ).join("");
 }
 let listTimer;
 async function renderList() {
   const q = $("#list-filter").value.trim();
-  if (state.tab === "issues") return renderFindings(q);
   const p = new URLSearchParams({ type: state.tab, limit: 300 });
   if (q) p.set("q", q);
   const res = await api(`/api/entities?${p}`);
@@ -175,22 +173,6 @@ function itemHtml(e) {
     <div class="sb">${esc(e.type === "document" && !e.key.includes(":") ? [e.name !== e.key ? e.name : null, e.subtitle].filter(Boolean).join(" · ") : e.subtitle || "")}${e.missing ? " · referenced only" : ""}</div></div>
     ${e.degree != null ? `<span class="deg">${e.degree}</span>` : ""}</div>`;
 }
-async function renderFindings(q) {
-  const kinds = Object.entries(state.stats.issues).sort((a, b) => b[1] - a[1]);
-  const active = state.findingKind || kinds[0]?.[0];
-  state.findingKind = active;
-  const items = await api(`/api/issues?kind=${encodeURIComponent(active)}&limit=500`);
-  const filtered = q ? items.filter((i) => (i.detail + (i.path || "") + (i.entity_name || "")).toLowerCase().includes(q.toLowerCase())) : items;
-  $("#list").innerHTML =
-    kinds.map(([k, n]) => `<div class="finding-kind ${k === active ? "active" : ""}" data-kind="${k}"><span>${esc(k.replaceAll("_", " "))}</span><span class="deg">${n}</span></div>`).join("") +
-    `<hr style="border:0;border-top:1px solid var(--border);margin:8px 4px">` +
-    filtered.map((i) => `<div class="item" ${i.entity_id ? `data-id="${i.entity_id}"` : `data-file="${i.file_id}"`}>
-       <span class="dot sev-${i.severity}"></span>
-       <div class="txt"><div class="nm" style="white-space:normal">${esc(i.detail)}</div>
-       <div class="sb">${esc(i.entity_name || (i.path || "").split("/").slice(-2).join("/"))}</div></div></div>`).join("");
-  $("#list-footer").textContent = `${filtered.length} “${active.replaceAll("_", " ")}” findings`;
-}
-
 /* ------------------------------------------------------------ details */
 async function select(id, { recenter = true } = {}) {
   state.selected = id;
@@ -246,12 +228,6 @@ function renderDetails(e) {
         ${list.length > shown.length ? `<button class="more" data-more="${k}">+${list.length - shown.length} more</button>` : ""}</div></div>`;
     }
     h += `</div>`;
-  }
-
-  // findings
-  if (e.issues.length) {
-    h += `<div class="section"><h4>Findings <span class="n">${e.issues.length}</span></h4>` +
-      e.issues.slice(0, 30).map((i) => `<div class="issue ${i.severity} ${i.file_id ? "clickable" : ""}" ${i.file_id ? `data-file="${i.file_id}"` : ""}><span class="k">${esc(i.kind.replaceAll("_", " "))}</span>${esc(i.detail)}</div>`).join("") + `</div>`;
   }
 
   // evidence
@@ -332,7 +308,6 @@ async function openFile(fid, ent) {
       <span class="dot ${m.type}" style="width:8px;height:8px;border-radius:50%;flex:none"></span>
       <span>${esc(m.surface)}${m.entity_name && m.entity_name !== m.surface ? ` <span style="color:var(--muted)">→ ${esc(m.entity_name)}</span>` : ""}</span>
       <span class="r">${esc(m.role.replaceAll("_", " "))}</span></div>`).join("");
-  $("#file-issues").innerHTML = f.issues.length ? `<h4 style="margin-top:16px">Findings</h4>` + f.issues.map((i) => `<div class="issue ${i.severity}"><span class="k">${esc(i.kind.replaceAll("_", " "))}</span>${esc(i.detail)}</div>`).join("") : "";
   $("#file-mentions").onclick = (ev) => {
     const m = ev.target.closest("[data-id]");
     if (m) { $("#file-dialog").close(); select(+m.dataset.id); }
@@ -547,12 +522,8 @@ async function boot() {
     renderTabs(); renderList();
   };
   $("#list").onclick = (e) => {
-    const k = e.target.closest("[data-kind]");
-    if (k) { state.findingKind = k.dataset.kind; return renderList(); }
     const it = e.target.closest("[data-id]");
     if (it) return select(+it.dataset.id);
-    const f = e.target.closest("[data-file]");
-    if (f && f.dataset.file !== "null") openFile(+f.dataset.file);
   };
   $("#list-filter").oninput = () => { clearTimeout(listTimer); listTimer = setTimeout(renderList, 200); };
   $("#search").oninput = (e) => { clearTimeout(searchTimer); searchTimer = setTimeout(() => doSearch(e.target.value.trim()), 180); };

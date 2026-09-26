@@ -2,7 +2,6 @@ package com.dubsof.graph.extract;
 
 import com.dubsof.graph.dao.FactsDao;
 import com.dubsof.graph.dao.FilesDao;
-import com.dubsof.graph.dao.IssuesDao;
 import com.dubsof.graph.dao.MentionsDao;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.db.Db;
@@ -55,7 +54,6 @@ public class Extractor {
     private final FilesDao filesDao = new FilesDao();
     private final MentionsDao mentionsDao = new MentionsDao();
     private final FactsDao factsDao = new FactsDao();
-    private final IssuesDao issuesDao = new IssuesDao();
 
     /** Tried in this order; the first that recognises the file wins. */
     private final Parser[] parsers = {
@@ -156,7 +154,7 @@ public class Extractor {
 
     // ================================================================ stage runner
 
-    /** Extracts every readable file and stores mentions, facts and issues. */
+    /** Extracts every readable file and stores its mentions and facts. */
     public static Map<String, Integer> run(Connection conn) throws Exception {
         return new Extractor().extractAll(conn);
     }
@@ -189,10 +187,6 @@ public class Extractor {
                 factsDao.insert(conn, row.id, ids.get(f.src), f.rel, ids.get(f.dst));
             }
             
-            for (String[] issue : ex.issues) {
-                issuesDao.insert(conn, issue[0], issue[1], issue[2], row.id, null);
-            }
-            
             if (ex.doc != null) {
                 docMentionOfFile.put(row.id, ids.get(ex.doc));
             }
@@ -207,33 +201,11 @@ public class Extractor {
                 factsDao.insert(conn, row.id, docMentionOfFile.get(row.id), RelationType.ATTACHED_TO, docMentionOfFile.get(row.parentId));
             }
         }
-        fileIssues(conn);
         Db.commit(conn);
         Map<String, Integer> stats = new LinkedHashMap<>();
         stats.put("files", files.size());
         stats.put("mentions", mentions);
         stats.put("facts", facts);
         return stats;
-    }
-
-    /** Findings about the files themselves: wrong extension, unreadable, waiting for OCR. */
-    private void fileIssues(Connection conn) throws Exception {
-        Map<String, FileKind> extKinds = new HashMap<String, FileKind>();   // extension -> the kind it promises
-        extKinds.put(".pdf", FileKind.PDF);
-        extKinds.put(".docx", FileKind.DOCX);
-        extKinds.put(".xlsx", FileKind.XLSX);
-        extKinds.put(".png", FileKind.PNG);
-        extKinds.put(".jpg", FileKind.JPG);
-        extKinds.put(".eml", FileKind.EML);
-        for (FileRow f : filesDao.findExcept(conn, FileStatus.SKIPPED)) {
-            if (f.ext != null && extKinds.containsKey(f.ext) && extKinds.get(f.ext) != f.kind) {
-                issuesDao.insert(conn, "mislabelled", "info", "extension " + f.ext + " but content is " + f.kind.value(), f.id, null);
-            }
-            if (f.status == FileStatus.CORRUPT || f.size == 0) {
-                issuesDao.insert(conn, "unreadable", "error", f.error != null ? f.error : "empty file (0 bytes)", f.id, null);
-            } else if (f.status == FileStatus.NEEDS_OCR) {
-                issuesDao.insert(conn, "needs_ocr", "info", "image-only; content not read (enable an OCR backend)", f.id, null);
-            }
-        }
     }
 }
