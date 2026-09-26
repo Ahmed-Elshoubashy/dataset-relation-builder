@@ -2,6 +2,7 @@ package com.dubsof.graph.dao;
 
 import com.dubsof.graph.dao.row.RelationRow;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.extract.RelationType;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -50,9 +51,9 @@ public class RelationsDao {
     }
 
     /** Adds {@code weight} to the relation (creating it if needed) and returns its id. */
-    public long upsert(Connection conn, long src, long dst, String rel, long weight) throws SQLException {
-        Db.update(conn, UPSERT, src, dst, rel, weight);
-        return Db.number(conn, SELECT_ID, src, dst, rel);
+    public long upsert(Connection conn, long src, long dst, RelationType rel, long weight) throws SQLException {
+        Db.update(conn, UPSERT, src, dst, rel.value(), weight);
+        return Db.number(conn, SELECT_ID, src, dst, rel.value());
     }
 
     public void addEvidence(Connection conn, long relationId, long fileId) throws SQLException {
@@ -76,7 +77,7 @@ public class RelationsDao {
         r.id = rs.getLong("id");
         r.src = rs.getLong("src");
         r.dst = rs.getLong("dst");
-        r.rel = rs.getString("rel");
+        r.rel = RelationType.fromValue(rs.getString("rel"));
         r.weight = rs.getLong("weight");
         r.derived = rs.getLong("derived");
         return r;

@@ -3,6 +3,7 @@ package com.dubsof.graph.extract.parsers;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.util.Text;
 
 import java.util.ArrayList;
@@ -127,23 +128,23 @@ public class BusinessDocParser implements Parser {
                 break;
             }
         }
-        ex.fact(doc, "ISSUED_TO", billCompany);
+        ex.fact(doc, RelationType.ISSUED_TO, billCompany);
         String attn = field(text, "Attn", "(.+)");
         if (attn != null) {
-            ex.fact(doc, "ATTENTION_OF", personWithOrg(ex, attn, "attn", billCompany));
+            ex.fact(doc, RelationType.ATTENTION_OF, personWithOrg(ex, attn, "attn", billCompany));
         }
         if (job != null) {
             Integer pj = ex.addMentionWithConfidence(EntityType.PROJECT, job, "doc_job_field", 0.9,
                     "company_mention", billCompany != null ? billCompany : folderCompany);
-            ex.fact(pj, "HAS_DOCUMENT", doc);
+            ex.fact(pj, RelationType.HAS_DOCUMENT, doc);
         }
         if (quoteRef != null) {
-            ex.fact(doc, "REFERENCES", ex.addMention(EntityType.DOCUMENT, quoteRef, "reference", "key", quoteRef, "doc_type", "quote"));
+            ex.fact(doc, RelationType.REFERENCES, ex.addMention(EntityType.DOCUMENT, quoteRef, "reference", "key", quoteRef, "doc_type", "quote"));
         }
         for (Map<String, Object> it : items) {
             Matcher code = PRODUCT_CODE.matcher((String) it.get("desc"));
             if (code.find()) {
-                ex.fact(doc, "LISTS_PRODUCT", ex.addMention(EntityType.PRODUCT, (String) it.get("desc"), "line_item", "code", code.group(1)));
+                ex.fact(doc, RelationType.LISTS_PRODUCT, ex.addMention(EntityType.PRODUCT, (String) it.get("desc"), "line_item", "code", code.group(1)));
             }
         }
         return true;

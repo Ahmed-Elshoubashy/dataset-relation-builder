@@ -3,6 +3,7 @@ package com.dubsof.graph.extract.parsers;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.FileKind;
 
 import java.util.regex.Matcher;
@@ -27,9 +28,9 @@ public class CalendarParser implements Parser {
         Matcher m = Pattern.compile("^Site visit\\s+\\W\\s+(.+?)\\s+\\((.+)\\)$").matcher(summary);
         if (m.matches()) {
             Integer company = ex.addMention(EntityType.COMPANY, m.group(2), "calendar_summary");
-            ex.fact(doc, "ADDRESSED_TO", company);
+            ex.fact(doc, RelationType.ADDRESSED_TO, company);
             ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, m.group(1), "calendar_summary", 0.9, "company_mention", company != null ? company : folderCompany),
-                    "HAS_DOCUMENT", doc);
+                    RelationType.HAS_DOCUMENT, doc);
         }
         return true;
     }

@@ -13,6 +13,7 @@ import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.dao.row.MentionRow;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.EntityType;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.resolve.NameMatcher.Match;
 import com.dubsof.graph.util.Text;
 
@@ -41,7 +42,8 @@ import java.util.TreeSet;
 public class Resolver {
 
     /** Relations whose other end tells which customer (or product) a document belongs to. */
-    private static final List<String> COUNTERPARTY_RELATIONS = java.util.Arrays.asList("ISSUED_TO", "ADDRESSED_TO", "PARTY_TO", "DESCRIBES");
+    private static final List<RelationType> COUNTERPARTY_RELATIONS = java.util.Arrays.asList(
+            RelationType.ISSUED_TO, RelationType.ADDRESSED_TO, RelationType.PARTY_TO, RelationType.DESCRIBES);
 
     static final double ACCEPT = 0.80;          // auto-merge at or above
     static final double GRAY = 0.65;            // between GRAY and ACCEPT: ask the adjudicator
@@ -525,7 +527,7 @@ public class Resolver {
     private void documents() throws Exception {
         Map<Long, Long> party = new HashMap<Long, Long>();   // self-mention -> counterparty entity
         for (FactRow f : factsDao.findWithRelations(conn, COUNTERPARTY_RELATIONS)) {
-            boolean partyTo = "PARTY_TO".equals(f.rel);
+            boolean partyTo = f.rel == RelationType.PARTY_TO;
             long docMention = partyTo ? f.dst : f.src;
             Long other = entityOfMention(partyTo ? f.src : f.dst);
             if (other != null && other != owner && !party.containsKey(docMention)) {

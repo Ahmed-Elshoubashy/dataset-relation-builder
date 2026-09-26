@@ -18,6 +18,7 @@ import com.dubsof.graph.dao.row.MisfiledDocumentRow;
 import com.dubsof.graph.dao.row.MultiCustomerDocumentRow;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.EntityType;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.FileStatus;
 import com.dubsof.graph.resolve.NameMatcher;
 
@@ -68,7 +69,7 @@ public class Relator {
         // group facts by (src entity, dst entity, rel), remembering every file that states them
         Map<String, Set<Long>> grouped = new LinkedHashMap<String, Set<Long>>();
         for (EntityFactRow f : factsDao.findBetweenEntities(conn)) {
-            String k = f.srcEntityId + "|" + f.dstEntityId + "|" + f.rel;
+            String k = f.srcEntityId + "|" + f.dstEntityId + "|" + f.rel.value();
             if (!grouped.containsKey(k)) {
                 grouped.put(k, new TreeSet<Long>());
             }
@@ -76,7 +77,7 @@ public class Relator {
         }
         for (Map.Entry<String, Set<Long>> e : grouped.entrySet()) {
             String[] p = e.getKey().split("\\|");
-            upsert(Long.parseLong(p[0]), Long.parseLong(p[1]), p[2], e.getValue());
+            upsert(Long.parseLong(p[0]), Long.parseLong(p[1]), RelationType.fromValue(p[2]), e.getValue());
         }
         int gazetteer = gazetteer();
         relationsDao.deriveShortcuts(conn);
@@ -91,7 +92,7 @@ public class Relator {
     }
 
     /** Adds one relation (weight = number of files) and its evidence files. */
-    private void upsert(long src, long dst, String rel, Set<Long> fileIds) throws Exception {
+    private void upsert(long src, long dst, RelationType rel, Set<Long> fileIds) throws Exception {
         if (src == dst) {
             return;
         }
@@ -167,7 +168,7 @@ public class Relator {
                 mentionsDao.insertResolved(conn, f.id, EntityType.fromValue(target[1]), name, "text_mention", entity, "gazetteer", 0.6);
                 Set<Long> one = new TreeSet<Long>();
                 one.add(f.id);
-                upsert(doc, entity, "MENTIONS", one);
+                upsert(doc, entity, RelationType.MENTIONS, one);
                 here.add(entity);
                 linked.put(f.id, here);
                 added++;

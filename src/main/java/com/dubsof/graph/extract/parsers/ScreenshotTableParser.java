@@ -3,6 +3,7 @@ package com.dubsof.graph.extract.parsers;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.util.Text;
 
 import java.util.ArrayList;
@@ -58,8 +59,8 @@ public class ScreenshotTableParser implements Parser {
             jm.find();
             Integer pj = ex.addMentionWithConfidence(EntityType.PROJECT, jm.group(), "screenshot_row", 0.9, "job_id", jm.group(),
                     "company_mention", company, "status", attrs.get("status"), "value", attrs.get("value"));
-            ex.fact(company, "HAS_PROJECT", pj);
-            ex.fact(pj, "HAS_DOCUMENT", doc);
+            ex.fact(company, RelationType.HAS_PROJECT, pj);
+            ex.fact(pj, RelationType.HAS_DOCUMENT, doc);
         }
         return true;
     }

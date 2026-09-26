@@ -3,11 +3,13 @@ package com.dubsof.graph.dao;
 import com.dubsof.graph.dao.row.EntityFactRow;
 import com.dubsof.graph.dao.row.FactRow;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.util.Json;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 
 /** All SQL for the {@code facts} table. */
@@ -22,12 +24,16 @@ public class FactsDao {
                     + " JOIN mentions ms ON ms.id = f.src JOIN mentions md ON md.id = f.dst"
                     + " WHERE ms.entity_id IS NOT NULL AND md.entity_id IS NOT NULL ORDER BY f.id";
 
-    public void insert(Connection conn, long fileId, long srcMention, String rel, long dstMention) throws SQLException {
-        Db.update(conn, INSERT, fileId, srcMention, rel, dstMention);
+    public void insert(Connection conn, long fileId, long srcMention, RelationType rel, long dstMention) throws SQLException {
+        Db.update(conn, INSERT, fileId, srcMention, rel.value(), dstMention);
     }
 
-    public List<FactRow> findWithRelations(Connection conn, List<String> rels) throws SQLException {
-        return Db.list(conn, SELECT_WITH_RELATIONS, FactsDao::map, Json.write(rels));
+    public List<FactRow> findWithRelations(Connection conn, List<RelationType> rels) throws SQLException {
+        List<String> values = new ArrayList<>();
+        for (RelationType r : rels) {
+            values.add(r.value());
+        }
+        return Db.list(conn, SELECT_WITH_RELATIONS, FactsDao::map, Json.write(values));
     }
 
     public List<EntityFactRow> findBetweenEntities(Connection conn) throws SQLException {
@@ -39,7 +45,7 @@ public class FactsDao {
         f.id = rs.getLong("id");
         f.fileId = rs.getLong("file_id");
         f.src = rs.getLong("src");
-        f.rel = rs.getString("rel");
+        f.rel = RelationType.fromValue(rs.getString("rel"));
         f.dst = rs.getLong("dst");
         return f;
     }
@@ -48,7 +54,7 @@ public class FactsDao {
         EntityFactRow f = new EntityFactRow();
         f.fileId = rs.getLong("file_id");
         f.srcEntityId = rs.getLong("src_entity");
-        f.rel = rs.getString("rel");
+        f.rel = RelationType.fromValue(rs.getString("rel"));
         f.dstEntityId = rs.getLong("dst_entity");
         return f;
     }

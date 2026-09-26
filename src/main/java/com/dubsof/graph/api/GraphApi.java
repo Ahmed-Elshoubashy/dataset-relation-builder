@@ -17,6 +17,7 @@ import com.dubsof.graph.dao.row.RelatedEntityRow;
 import com.dubsof.graph.dao.row.RelationRow;
 import com.dubsof.graph.dao.row.SourceRow;
 import com.dubsof.graph.extract.EntityType;
+import com.dubsof.graph.extract.RelationType;
 
 import java.sql.Connection;
 import java.util.ArrayList;
@@ -149,7 +150,7 @@ public class GraphApi {
                 nodeMaps.add(summary(e));
             }
             for (RelationRow r : graphQueries.findRelationsAmong(conn, nodes, derived)) {
-                if (!overview || "HAS_PROJECT".equals(r.rel)) {   // the overview only draws customer -> project
+                if (!overview || r.rel == RelationType.HAS_PROJECT) {   // the overview only draws customer -> project
                     edges.add(relationMap(r));
                 }
             }
@@ -330,7 +331,7 @@ public class GraphApi {
         m.put("id", r.id);
         m.put("src", r.src);
         m.put("dst", r.dst);
-        m.put("rel", r.rel);
+        m.put("rel", r.rel.value());
         m.put("weight", r.weight);
         m.put("derived", r.derived);
         return m;

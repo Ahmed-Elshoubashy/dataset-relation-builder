@@ -2,6 +2,7 @@ package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.util.Text;
 
 import static com.dubsof.graph.extract.parsers.ParserUtils.document;
@@ -18,7 +19,7 @@ public class MeetingNotesParser implements Parser {
         }
         Integer doc = document(ex, row, "meeting_notes", null, Text.lines(text).get(0));
         for (String name : attendees.split(",|\\band\\b")) {
-            ex.fact(personWithOrg(ex, name, "attendee", null), "ATTENDED", doc);
+            ex.fact(personWithOrg(ex, name, "attendee", null), RelationType.ATTENDED, doc);
         }
         return true;
     }

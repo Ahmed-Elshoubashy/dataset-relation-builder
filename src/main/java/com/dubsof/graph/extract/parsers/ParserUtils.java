@@ -4,6 +4,7 @@ import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.Ingestor;
 
 import java.util.HashMap;
@@ -65,11 +66,11 @@ public final class ParserUtils {
             if (key.equals(skipKey) || prefix.equals("SPEC") || prefix.equals("DS") || prefix.equals("ISO")) {
                 continue;
             }
-            ex.fact(ex.doc, "REFERENCES", ex.addMentionWithConfidence(EntityType.DOCUMENT, key, "reference", 0.9, "key", key, "doc_type", PREFIX_TYPES.get(prefix)));
+            ex.fact(ex.doc, RelationType.REFERENCES, ex.addMentionWithConfidence(EntityType.DOCUMENT, key, "reference", 0.9, "key", key, "doc_type", PREFIX_TYPES.get(prefix)));
         }
         Matcher j = JOB_ID.matcher(text);
         while (j.find()) {
-            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, j.group(), "reference", 0.9, "job_id", j.group()), "HAS_DOCUMENT", ex.doc);
+            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, j.group(), "reference", 0.9, "job_id", j.group()), RelationType.HAS_DOCUMENT, ex.doc);
         }
     }
 
@@ -94,7 +95,7 @@ public final class ParserUtils {
         all[1] = org;
         System.arraycopy(attrs, 0, all, 2, attrs.length);
         Integer p = ex.addMention(EntityType.PERSON, clean, role, all);
-        ex.fact(p, "WORKS_FOR", org);
+        ex.fact(p, RelationType.WORKS_FOR, org);
         return p;
     }
 

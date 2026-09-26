@@ -32,10 +32,10 @@ public class Extraction {
     /** "mention src REL mention dst", e.g. document ISSUED_TO company. */
     public static class Fact {
         public final int src;
-        public final String rel;
+        public final RelationType rel;
         public final int dst;
 
-        Fact(int src, String rel, int dst) {
+        Fact(int src, RelationType rel, int dst) {
             this.src = src;
             this.rel = rel;
             this.dst = dst;
@@ -93,7 +93,7 @@ public class Extraction {
         return addMentionWithConfidence(etype, surface, role, 1.0, attrs);
     }
 
-    public void fact(Integer src, String rel, Integer dst) {
+    public void fact(Integer src, RelationType rel, Integer dst) {
         if (src != null && dst != null && !src.equals(dst)) {
             facts.add(new Fact(src, rel, dst));
         }

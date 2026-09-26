@@ -3,6 +3,7 @@ package com.dubsof.graph.extract.parsers;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.FileKind;
 
 import static com.dubsof.graph.extract.parsers.ParserUtils.document;
@@ -27,9 +28,9 @@ public class VcardParser implements Parser {
         Integer p = personWithOrg(ex, orEmpty(fn), "vcard", orgMention,
                 "email", mail != null ? mail.toLowerCase() : null, "phone", field(text, "TEL", "(.+)"));
         if (mail != null) {
-            ex.fact(p, "WORKS_FOR", companyFromDomain(ex, mail));
+            ex.fact(p, RelationType.WORKS_FOR, companyFromDomain(ex, mail));
         }
-        ex.fact(doc, "DESCRIBES", p);
+        ex.fact(doc, RelationType.DESCRIBES, p);
         return true;
     }
 }

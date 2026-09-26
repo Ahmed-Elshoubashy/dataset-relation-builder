@@ -3,6 +3,7 @@ package com.dubsof.graph.extract.parsers;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.util.Text;
 
 import java.util.List;
@@ -34,8 +35,8 @@ public class CertificateParser implements Parser {
         if (iso != null) {
             Integer doc = document(ex, row, "iso_certificate", iso, lines.get(1) + " certificate (" + iso + ")",
                     "valid_until", field(text, "Valid until", "(.+)"));
-            ex.fact(ex.addMention(EntityType.COMPANY, subject, "certified_company"), "HOLDS", doc);
-            ex.fact(doc, "ISSUED_BY", ex.addMention(EntityType.COMPANY, orEmpty(field(text, "Certification Body", "(.+)")), "certification_body"));
+            ex.fact(ex.addMention(EntityType.COMPANY, subject, "certified_company"), RelationType.HOLDS, doc);
+            ex.fact(doc, RelationType.ISSUED_BY, ex.addMention(EntityType.COMPANY, orEmpty(field(text, "Certification Body", "(.+)")), "certification_body"));
             return true;
         }
         Matcher n = Pattern.compile("\\d+").matcher(stem(row.path));
@@ -43,8 +44,8 @@ public class CertificateParser implements Parser {
         Integer doc = document(ex, row, "training_certificate", n.find() ? "CERT-" + n.group() : null,
                 titleCase(lines.get(0)) + " – " + subject, "expiry", expiry.find() ? expiry.group(1) : null);
         Integer holder = personWithOrg(ex, subject, "certificate_holder", "HR".equals(row.area) ? owner(ex) : null);
-        ex.fact(holder, "HOLDS", doc);
-        ex.fact(doc, "ISSUED_BY", ex.addMention(EntityType.COMPANY, orEmpty(field(text, "Training Provider", "(.+)")), "training_provider"));
+        ex.fact(holder, RelationType.HOLDS, doc);
+        ex.fact(doc, RelationType.ISSUED_BY, ex.addMention(EntityType.COMPANY, orEmpty(field(text, "Training Provider", "(.+)")), "training_provider"));
         return true;
     }
 

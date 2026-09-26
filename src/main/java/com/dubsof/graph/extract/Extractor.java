@@ -113,19 +113,19 @@ public class Extractor {
         if (filenameCompany != null) {
             Integer c = ex.addMentionWithConfidence(EntityType.COMPANY, filenameCompany, "filename", 0.7, "truncated", Boolean.TRUE);
             if (PREFIX_TYPES.containsValue(ex.docMention().attrs.get("doc_type"))) {
-                ex.fact(ex.doc, "ISSUED_TO", c);
+                ex.fact(ex.doc, RelationType.ISSUED_TO, c);
             }
         }
         
         Matcher pm = Pattern.compile("^([A-Z]{2,4}-\\d{2,4})(?:-\\d+)?_").matcher(stem);
         
         if (pm.lookingAt() && !Pattern.compile("^(INV|QUO|PO|DN|DWG|CAL)-").matcher(stem).lookingAt()) {
-            ex.fact(ex.doc, "DESCRIBES", ex.addMentionWithConfidence(EntityType.PRODUCT, pm.group(1), "filename", 0.8, "code", pm.group(1)));
+            ex.fact(ex.doc, RelationType.DESCRIBES, ex.addMentionWithConfidence(EntityType.PRODUCT, pm.group(1), "filename", 0.8, "code", pm.group(1)));
         }
         
-        ex.fact(project, "HAS_DOCUMENT", ex.doc);
+        ex.fact(project, RelationType.HAS_DOCUMENT, ex.doc);
         if (project == null) {
-            ex.fact(ex.doc, "FILED_UNDER", folderCompany);
+            ex.fact(ex.doc, RelationType.FILED_UNDER, folderCompany);
         }
         
         if (!text.isEmpty() && !"email".equals(ex.docMention().attrs.get("doc_type"))) {
@@ -148,7 +148,7 @@ public class Extractor {
             Matcher jobMention = Ingestor.JOB_DIR.matcher(row.folderJob);
             if (jobMention.matches()) {
                 project = ex.addMention(EntityType.PROJECT, jobMention.group(2), "folder", "job_id", jobMention.group(1), "company_mention", company);
-                ex.fact(company, "HAS_PROJECT", project);
+                ex.fact(company, RelationType.HAS_PROJECT, project);
             }
         }
         return new Integer[] {company, project};
@@ -204,7 +204,7 @@ public class Extractor {
         // attachments and archive members point back at their container document
         for (FileRow row : files) {
             if (row.parentId != null && docMentionOfFile.containsKey(row.parentId) && docMentionOfFile.containsKey(row.id)) {
-                factsDao.insert(conn, row.id, docMentionOfFile.get(row.id), "ATTACHED_TO", docMentionOfFile.get(row.parentId));
+                factsDao.insert(conn, row.id, docMentionOfFile.get(row.id), RelationType.ATTACHED_TO, docMentionOfFile.get(row.parentId));
             }
         }
         fileIssues(conn);
