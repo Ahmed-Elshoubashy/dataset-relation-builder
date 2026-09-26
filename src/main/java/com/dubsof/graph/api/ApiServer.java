@@ -1,8 +1,9 @@
 package com.dubsof.graph.api;
 
 import com.dubsof.graph.Config;
+import com.dubsof.graph.dao.FilesDao;
+import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.db.Db;
-import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.util.Json;
 import com.dubsof.graph.util.Text;
 import com.sun.net.httpserver.HttpExchange;
@@ -41,6 +42,7 @@ public class ApiServer {
     private static final Pattern FILE_RAW = Pattern.compile("^/api/files/(\\d+)/raw$");
 
     private final int port;
+    private final FilesDao filesDao = new FilesDao();
     private final ReentrantReadWriteLock dbLock = new ReentrantReadWriteLock();
     private final AnalysisApi analysis;
 
@@ -172,22 +174,22 @@ public class ApiServer {
     // ------------------------------------------------------------------ responses
 
     private void sendRawFile(HttpExchange ex, long id) throws Exception {
-        Map<String, Object> r;
+        FileRow file;
         dbLock.readLock().lock();
         Connection conn = Db.open(Config.DB_FILE, true);
         try {
-            r = Db.one(conn, "SELECT path, blob_path, kind FROM files WHERE id=?", id);
+            file = filesDao.findById(conn, id);
         } finally {
             conn.close();
             dbLock.readLock().unlock();
         }
-        if (r == null) {
+        if (file == null) {
             throw new ApiException(404, "Not Found");
         }
-        String type = FileKind.fromValue((String) r.get("kind")).contentType();
-        String[] members = ((String) r.get("path")).split(Pattern.quote("::"));
+        String type = file.kind.contentType();
+        String[] members = file.path.split(Pattern.quote("::"));
         String name = members[members.length - 1].substring(members[members.length - 1].lastIndexOf('/') + 1);
-        byte[] data = java.nio.file.Files.readAllBytes(new File((String) r.get("blob_path")).toPath());
+        byte[] data = java.nio.file.Files.readAllBytes(new File(file.blobPath).toPath());
         ex.getResponseHeaders().set("Content-Disposition", "inline; filename*=UTF-8''" + URLEncoder.encode(name, "UTF-8").replace("+", "%20"));
         send(ex, 200, type, data);
     }

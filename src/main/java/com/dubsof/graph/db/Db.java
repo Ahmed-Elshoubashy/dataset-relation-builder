@@ -8,7 +8,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -120,25 +119,35 @@ public final class Db {
         commit(conn);
     }
 
+    /** Everything derived from file text, in an order that respects the foreign keys. */
+    private static final String[] RESET_GRAPH = {
+        "DELETE FROM relation_evidence",
+        "DELETE FROM relations",
+        "DELETE FROM aliases",
+        "DELETE FROM issues",
+        "DELETE FROM facts",
+        "DELETE FROM mentions",
+        "DELETE FROM entities",
+    };
+    private static final String CHECKPOINT = "PRAGMA wal_checkpoint(TRUNCATE)";
+    private static final String LAST_INSERT_ID = "SELECT last_insert_rowid()";
+
     /** Drops everything derived from file text, so extraction and resolution can run again. */
     public static void resetGraph(Connection conn) throws SQLException {
-        for (String table : new String[] {"relation_evidence", "relations", "aliases", "issues", "facts", "mentions", "entities"}) {
-            update(conn, "DELETE FROM " + table);
+        for (String sql : RESET_GRAPH) {
+            update(conn, sql);
         }
         commit(conn);
     }
 
-    public static void setMeta(Connection conn, String key, Object value) throws SQLException {
-        update(conn, "INSERT OR REPLACE INTO meta VALUES (?,?)", key, String.valueOf(value));
-        commit(conn);
-    }
-
-    public static Map<String, String> meta(Connection conn) throws SQLException {
-        Map<String, String> out = new LinkedHashMap<String, String>();
-        for (Map<String, Object> r : query(conn, "SELECT key, value FROM meta")) {
-            out.put((String) r.get("key"), (String) r.get("value"));
+    /** Writes pending WAL changes into the main file, so the database is a single file again. */
+    public static void checkpoint(Connection conn) throws SQLException {
+        PreparedStatement ps = conn.prepareStatement(CHECKPOINT);
+        try {
+            ps.executeQuery().close();   // returns a status row
+        } finally {
+            ps.close();
         }
-        return out;
     }
 
     /** Moves a finished database into place. No connection may be open on {@code target}. */
@@ -148,20 +157,21 @@ public final class Db {
         Files.move(built.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
 
-    // ------------------------------------------------------------------ JDBC helpers
+    // ------------------------------------------------------------------ JDBC helpers (used by the DAOs)
 
-    public static List<Map<String, Object>> query(Connection conn, String sql, Object... args) throws SQLException {
+    /** Turns the current row of a ResultSet into an object. */
+    public interface RowMapper<T> {
+        T map(ResultSet rs) throws SQLException;
+    }
+
+    /** Runs a SELECT and maps every row. */
+    public static <T> List<T> list(Connection conn, String sql, RowMapper<T> mapper, Object... args) throws SQLException {
         PreparedStatement ps = prepare(conn, sql, args);
         try {
             ResultSet rs = ps.executeQuery();
-            ResultSetMetaData md = rs.getMetaData();
-            List<Map<String, Object>> rows = new ArrayList<Map<String, Object>>();
+            List<T> rows = new ArrayList<T>();
             while (rs.next()) {
-                Map<String, Object> row = new LinkedHashMap<String, Object>();
-                for (int i = 1; i <= md.getColumnCount(); i++) {
-                    row.put(md.getColumnLabel(i), rs.getObject(i));
-                }
-                rows.add(row);
+                rows.add(mapper.map(rs));
             }
             return rows;
         } finally {
@@ -169,19 +179,52 @@ public final class Db {
         }
     }
 
-    public static Map<String, Object> one(Connection conn, String sql, Object... args) throws SQLException {
-        List<Map<String, Object>> rows = query(conn, sql, args);
+    /** Runs a SELECT and maps the first row, or returns null when there is none. */
+    public static <T> T first(Connection conn, String sql, RowMapper<T> mapper, Object... args) throws SQLException {
+        List<T> rows = list(conn, sql, mapper, args);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    public static Object scalar(Connection conn, String sql, Object... args) throws SQLException {
-        Map<String, Object> row = one(conn, sql, args);
-        return row == null ? null : row.values().iterator().next();
+    /** First column of the first row as a number (0 when there is no row or it is NULL). */
+    public static long number(Connection conn, String sql, Object... args) throws SQLException {
+        Long v = first(conn, sql, new RowMapper<Long>() {
+            public Long map(ResultSet rs) throws SQLException {
+                return longOrNull(rs, 1);
+            }
+        }, args);
+        return v == null ? 0 : v;
     }
 
-    public static long count(Connection conn, String sql, Object... args) throws SQLException {
-        Object v = scalar(conn, sql, args);
-        return v == null ? 0 : ((Number) v).longValue();
+    /** A "SELECT key, COUNT(*) … GROUP BY key" query as an ordered map. */
+    public static Map<String, Long> counts(Connection conn, String sql, Object... args) throws SQLException {
+        Map<String, Long> out = new LinkedHashMap<String, Long>();
+        PreparedStatement ps = prepare(conn, sql, args);
+        try {
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) {
+                out.put(rs.getString(1), rs.getLong(2));
+            }
+            return out;
+        } finally {
+            ps.close();
+        }
+    }
+
+    /** A nullable INTEGER column (ResultSet.getLong turns NULL into 0). */
+    public static Long longOrNull(ResultSet rs, String column) throws SQLException {
+        long v = rs.getLong(column);
+        return rs.wasNull() ? null : v;
+    }
+
+    public static Long longOrNull(ResultSet rs, int column) throws SQLException {
+        long v = rs.getLong(column);
+        return rs.wasNull() ? null : v;
+    }
+
+    /** A nullable REAL column. */
+    public static Double doubleOrNull(ResultSet rs, String column) throws SQLException {
+        double v = rs.getDouble(column);
+        return rs.wasNull() ? null : v;
     }
 
     public static int update(Connection conn, String sql, Object... args) throws SQLException {
@@ -198,17 +241,13 @@ public final class Db {
         if (update(conn, sql, args) == 0) {
             return 0;
         }
-        return count(conn, "SELECT last_insert_rowid()");
+        return number(conn, LAST_INSERT_ID);
     }
 
     public static void commit(Connection conn) throws SQLException {
         if (!conn.getAutoCommit()) {
             conn.commit();
         }
-    }
-
-    public static long id(Object value) {
-        return ((Number) value).longValue();
     }
 
     private static PreparedStatement prepare(Connection conn, String sql, Object... args) throws SQLException {

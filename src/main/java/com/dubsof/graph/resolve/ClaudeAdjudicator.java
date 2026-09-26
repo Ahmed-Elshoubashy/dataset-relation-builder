@@ -8,6 +8,7 @@ import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.StopReason;
 import com.dubsof.graph.Config;
+import com.dubsof.graph.dao.AdjudicationsDao;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.util.Json;
 
@@ -21,16 +22,17 @@ public class ClaudeAdjudicator implements Adjudicator {
 
     private final AnthropicClient client = AnthropicOkHttpClient.fromEnv();
     private final Connection cache;
+    private final AdjudicationsDao adjudicationsDao = new AdjudicationsDao();
 
     public ClaudeAdjudicator() throws Exception {
         cache = Db.open(Config.OCR_CACHE_FILE, true);
-        Db.update(cache, "CREATE TABLE IF NOT EXISTS adjudications (k TEXT PRIMARY KEY, v TEXT)");
+        adjudicationsDao.createTable(cache);
     }
 
     public Verdict sameEntity(String etype, String mention, String candidate, String context) {
         try {
             String key = Json.write(Arrays.asList(etype, mention, candidate));
-            String cached = (String) Db.scalar(cache, "SELECT v FROM adjudications WHERE k=?", key);
+            String cached = adjudicationsDao.findVerdict(cache, key);
             if (cached != null) {
                 return toVerdict(Json.readMap(cached));
             }
@@ -56,7 +58,7 @@ public class ClaudeAdjudicator implements Adjudicator {
                     text.append(b.asText().text());
                 }
             }
-            Db.update(cache, "INSERT OR REPLACE INTO adjudications VALUES (?,?)", key, text.toString());
+            adjudicationsDao.save(cache, key, text.toString());
             return toVerdict(Json.readMap(text.toString()));
         } catch (Exception e) {
             return new Verdict(false, 0, "adjudicator error: " + e.getMessage());

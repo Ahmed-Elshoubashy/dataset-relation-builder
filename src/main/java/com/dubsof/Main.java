@@ -2,6 +2,7 @@ package com.dubsof;
 
 import com.dubsof.graph.Config;
 import com.dubsof.graph.api.ApiServer;
+import com.dubsof.graph.dao.MetaDao;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.pipeline.Pipeline;
 import com.dubsof.graph.pipeline.Progress;
@@ -20,6 +21,8 @@ import java.sql.Connection;
  * </pre>
  */
 public class Main {
+
+    private static final MetaDao metaDao = new MetaDao();
 
     public static void main(String[] args) throws Exception {
         String command = args.length > 0 ? args[0] : "serve";
@@ -45,7 +48,7 @@ public class Main {
                 Db.init(conn);
                 if (command.equals("ocr")) {
                     TextStage.run(conn, ocr, null, Progress.CONSOLE);
-                    Db.setMeta(conn, "ocr_backend", ocr);
+                    metaDao.set(conn, "ocr_backend", ocr);
                 }
                 Pipeline.detectOwner(conn, Progress.CONSOLE);
                 System.out.println("\nentities: " + Pipeline.graphStages(conn, Progress.CONSOLE));

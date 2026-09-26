@@ -1,6 +1,8 @@
 package com.dubsof.graph.ingest;
 
 import com.dubsof.graph.Config;
+import com.dubsof.graph.dao.FilesDao;
+import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.pipeline.Progress;
 import com.dubsof.graph.util.Text;
@@ -52,6 +54,7 @@ public class Ingestor {
     private static final Pattern EMAIL_KEY_HEADER = Pattern.compile("^(From|MIME-Version|Content-Type):", Pattern.MULTILINE);
 
     private final Connection conn;
+    private final FilesDao filesDao = new FilesDao();
     private int count;
 
     public Ingestor(Connection conn) {
@@ -72,8 +75,7 @@ public class Ingestor {
         }
 
         // Byte-identical duplicates point at their first copy, so each unique blob is read/OCR'd once.
-        Db.update(conn, "UPDATE files SET duplicate_of = (SELECT MIN(f2.id) FROM files f2 WHERE f2.sha256 = files.sha256)"
-                + " WHERE id != (SELECT MIN(f2.id) FROM files f2 WHERE f2.sha256 = files.sha256)");
+        ing.filesDao.markDuplicates(conn);
         Db.commit(conn);
         return ing.count;
     }
@@ -130,10 +132,20 @@ public class Ingestor {
             ctx = FolderContext.of(rel);
         }
 
-        long id = Db.insert(conn, "INSERT OR IGNORE INTO files (path, parent_id, blob_path, sha256, size, ext, kind,"
-                        + " area, folder_company, folder_job, folder_category, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                rel, parentId, blob.getAbsolutePath(), sha, data.length, extension(name), kind.value(),
-                ctx.area, ctx.company, ctx.job, ctx.category, status.value());
+        FileRow row = new FileRow();
+        row.path = rel;
+        row.parentId = parentId;
+        row.blobPath = blob.getAbsolutePath();
+        row.sha256 = sha;
+        row.size = data.length;
+        row.ext = extension(name);
+        row.kind = kind;
+        row.area = ctx.area;
+        row.folderCompany = ctx.company;
+        row.folderJob = ctx.job;
+        row.folderCategory = ctx.category;
+        row.status = status;
+        long id = filesDao.insertIfAbsent(conn, row);
         count++;
 
         if (id == 0) {

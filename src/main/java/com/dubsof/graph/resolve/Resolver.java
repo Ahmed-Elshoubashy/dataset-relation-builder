@@ -1,9 +1,18 @@
 package com.dubsof.graph.resolve;
 
 import com.dubsof.graph.Config;
+import com.dubsof.graph.dao.AliasesDao;
+import com.dubsof.graph.dao.EntitiesDao;
+import com.dubsof.graph.dao.FactsDao;
+import com.dubsof.graph.dao.FilesDao;
+import com.dubsof.graph.dao.IssuesDao;
+import com.dubsof.graph.dao.MentionsDao;
+import com.dubsof.graph.dao.row.EntityRow;
+import com.dubsof.graph.dao.row.FactRow;
+import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.dao.row.MentionRow;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.resolve.NameMatcher.Match;
-import com.dubsof.graph.util.Json;
 import com.dubsof.graph.util.Text;
 
 import java.sql.Connection;
@@ -30,6 +39,9 @@ import java.util.TreeSet;
  */
 public class Resolver {
 
+    /** Relations whose other end tells which customer (or product) a document belongs to. */
+    private static final List<String> COUNTERPARTY_RELATIONS = java.util.Arrays.asList("ISSUED_TO", "ADDRESSED_TO", "PARTY_TO", "DESCRIBES");
+
     static final double ACCEPT = 0.80;          // auto-merge at or above
     static final double GRAY = 0.65;            // between GRAY and ACCEPT: ask the adjudicator
     static final double AMBIGUOUS_MARGIN = 0.03;
@@ -40,33 +52,18 @@ public class Resolver {
             "letter_recipient", "vcard_org", "calendar_summary", "certified_company",
             "screenshot_row", "certification_body", "training_provider", "filename", "email_domain");
 
-    /** One row of the mentions table, held in memory while resolving. */
-    static class MentionRow {
-        long id;
-        long fileId;
-        String etype;
-        String surface;
-        String role;
-        Map<String, Object> attrs;
-        double confidence;
-        Long entityId;
-        String method;
-
-        Long attrId(String key) {
-            Object v = attrs.get(key);
-            return v == null ? null : ((Number) v).longValue();
-        }
-
-        String attrString(String key) {
-            Object v = attrs.get(key);
-            return v == null ? null : String.valueOf(v);
-        }
-    }
+    private final FilesDao filesDao = new FilesDao();
+    private final MentionsDao mentionsDao = new MentionsDao();
+    private final FactsDao factsDao = new FactsDao();
+    private final EntitiesDao entitiesDao = new EntitiesDao();
+    private final AliasesDao aliasesDao = new AliasesDao();
+    private final IssuesDao issuesDao = new IssuesDao();
 
     private final Connection conn;
     private final Adjudicator adjudicator;
+    /** Every mention, held in memory while resolving and written back at the end. */
     private final Map<Long, MentionRow> mentions = new LinkedHashMap<Long, MentionRow>();
-    private final Map<Long, Map<String, Object>> files = new HashMap<Long, Map<String, Object>>();
+    private final Map<Long, FileRow> files = new HashMap<Long, FileRow>();
     private final Map<String, Integer> stats = new TreeMap<String, Integer>();
     private final Set<Long> anchors = new HashSet<Long>();   // owner + folder customers: preferred on ties
     private long owner;
@@ -74,19 +71,11 @@ public class Resolver {
     public Resolver(Connection conn, Adjudicator adjudicator) throws Exception {
         this.conn = conn;
         this.adjudicator = adjudicator;
-        for (Map<String, Object> r : Db.query(conn, "SELECT * FROM mentions ORDER BY id")) {
-            MentionRow m = new MentionRow();
-            m.id = Db.id(r.get("id"));
-            m.fileId = Db.id(r.get("file_id"));
-            m.etype = (String) r.get("etype");
-            m.surface = (String) r.get("surface");
-            m.role = (String) r.get("role");
-            m.attrs = Json.readMap((String) r.get("attrs"));
-            m.confidence = ((Number) r.get("confidence")).doubleValue();
+        for (MentionRow m : mentionsDao.findAll(conn)) {
             mentions.put(m.id, m);
         }
-        for (Map<String, Object> r : Db.query(conn, "SELECT id, path, folder_company, folder_job, area FROM files")) {
-            files.put(Db.id(r.get("id")), r);
+        for (FileRow f : filesDao.findAll(conn)) {
+            files.put(f.id, f);
         }
     }
 
@@ -108,18 +97,18 @@ public class Resolver {
 
     /** Finds or creates an entity; new attrs are merged into existing ones. */
     private long entity(String etype, String key, String name, Map<String, Object> attrs) throws Exception {
-        Map<String, Object> row = Db.one(conn, "SELECT id, attrs FROM entities WHERE etype=? AND key=?", etype, key);
+        EntityRow row = entitiesDao.findByTypeAndKey(conn, etype, key);
         if (row != null) {
             if (attrs != null && !attrs.isEmpty()) {
-                Map<String, Object> merged = Json.readMap((String) row.get("attrs"));
+                Map<String, Object> merged = row.attrs;
                 for (Map.Entry<String, Object> e : attrs.entrySet()) {
                     if (e.getValue() != null) {
                         merged.put(e.getKey(), e.getValue());
                     }
                 }
-                Db.update(conn, "UPDATE entities SET attrs=? WHERE id=?", Json.write(merged), row.get("id"));
+                entitiesDao.updateAttrs(conn, row.id, merged);
             }
-            return Db.id(row.get("id"));
+            return row.id;
         }
         Map<String, Object> clean = new LinkedHashMap<String, Object>();
         if (attrs != null) {
@@ -129,15 +118,15 @@ public class Resolver {
                 }
             }
         }
-        return Db.insert(conn, "INSERT INTO entities (etype, name, key, attrs) VALUES (?,?,?,?)", etype, name, key, Json.write(clean));
+        return entitiesDao.insert(conn, etype, name, key, clean);
     }
 
     private Map<String, Object> entityAttrs(long id) throws Exception {
-        return Json.readMap((String) Db.scalar(conn, "SELECT attrs FROM entities WHERE id=?", id));
+        return entitiesDao.findById(conn, id).attrs;
     }
 
     private void saveEntityAttrs(long id, Map<String, Object> attrs) throws Exception {
-        Db.update(conn, "UPDATE entities SET attrs=? WHERE id=?", Json.write(attrs), id);
+        entitiesDao.updateAttrs(conn, id, attrs);
     }
 
     private void assign(MentionRow m, Long entityId, String method, double confidence) {
@@ -149,8 +138,7 @@ public class Resolver {
     }
 
     private void issue(String kind, String severity, String detail, Long fileId, Long entityId) throws Exception {
-        Db.update(conn, "INSERT INTO issues (kind, severity, detail, file_id, entity_id) VALUES (?,?,?,?,?)",
-                kind, severity, detail, fileId, entityId);
+        issuesDao.insert(conn, kind, severity, detail, fileId, entityId);
     }
 
     private List<MentionRow> byType(String etype) {
@@ -252,7 +240,7 @@ public class Resolver {
             Object[] best = scored.get(0);
             String candidate = entities.get(best[2]);
             Adjudicator.Verdict v = adjudicator.sameEntity("company", m.surface, candidate,
-                    "seen as " + m.role + " in file " + files.get(m.fileId).get("path"));
+                    "seen as " + m.role + " in file " + files.get(m.fileId).path);
             if (v.same) {
                 return new Object[] {best[2], "adjudicated:" + best[1], Math.min((Double) best[0], v.confidence)};
             }
@@ -292,9 +280,9 @@ public class Resolver {
             Map<String, Object> a = attrs("job_id", jobId, "title", title, "company_id", company,
                     "source", m.role.equals("folder") ? "folder" : m.role,
                     "status", m.attrs.get("status"), "value", m.attrs.get("value"));
-            Map<String, Object> existing = Db.one(conn, "SELECT attrs FROM entities WHERE etype='project' AND key=?", jobId);
+            EntityRow existing = entitiesDao.findByTypeAndKey(conn, "project", jobId);
             if (existing != null) {   // never overwrite what the folder said, except live status/value
-                Map<String, Object> old = Json.readMap((String) existing.get("attrs"));
+                Map<String, Object> old = existing.attrs;
                 Map<String, Object> keep = new LinkedHashMap<String, Object>();
                 for (Map.Entry<String, Object> e : a.entrySet()) {
                     if (!old.containsKey(e.getKey()) || e.getKey().equals("status") || e.getKey().equals("value")) {
@@ -370,7 +358,7 @@ public class Resolver {
             }
             assign(m, chosen, method, method.contains("company") ? 0.9 : 0.75);
             if (here != null && !chosen.equals(here)) {
-                issue("misfiled", "warn", "document is filed under " + files.get(m.fileId).get("folder_job")
+                issue("misfiled", "warn", "document is filed under " + files.get(m.fileId).folderJob
                         + " but refers to '" + m.surface + "' of another project", m.fileId, chosen);
             }
         }
@@ -535,11 +523,10 @@ public class Resolver {
      */
     private void documents() throws Exception {
         Map<Long, Long> party = new HashMap<Long, Long>();   // self-mention -> counterparty entity
-        for (Map<String, Object> f : Db.query(conn,
-                "SELECT src, rel, dst FROM facts WHERE rel IN ('ISSUED_TO','ADDRESSED_TO','PARTY_TO','DESCRIBES') ORDER BY id")) {
-            boolean partyTo = "PARTY_TO".equals(f.get("rel"));
-            long docMention = Db.id(partyTo ? f.get("dst") : f.get("src"));
-            Long other = entityOfMention(Db.id(partyTo ? f.get("src") : f.get("dst")));
+        for (FactRow f : factsDao.findWithRelations(conn, COUNTERPARTY_RELATIONS)) {
+            boolean partyTo = "PARTY_TO".equals(f.rel);
+            long docMention = partyTo ? f.dst : f.src;
+            Long other = entityOfMention(partyTo ? f.src : f.dst);
             if (other != null && other != owner && !party.containsKey(docMention)) {
                 party.put(docMention, other);
             }
@@ -570,7 +557,7 @@ public class Resolver {
                 splitKeys.put(e.getKey(), e.getValue());
                 TreeSet<String> names = new TreeSet<String>();
                 for (Long p : e.getValue()) {
-                    names.add((String) Db.scalar(conn, "SELECT name FROM entities WHERE id=?", p));
+                    names.add(entitiesDao.findById(conn, p).name);
                 }
                 issue("number_collision", "warn", e.getKey() + " is used by " + e.getValue().size()
                         + " different documents (" + NameMatcher.join(new ArrayList<String>(names), ", ")
@@ -691,7 +678,7 @@ public class Resolver {
                     best = d.getKey();
                 }
             }
-            Db.update(conn, "UPDATE entities SET name=? WHERE id=?", best, e.getKey());
+            entitiesDao.updateName(conn, e.getKey(), best);
         }
     }
 
@@ -699,16 +686,9 @@ public class Resolver {
 
     private void flush() throws Exception {
         for (MentionRow m : mentions.values()) {
-            Db.update(conn, "UPDATE mentions SET entity_id=?, method=?, confidence=? WHERE id=?",
-                    m.entityId, m.method, m.confidence, m.id);
+            mentionsDao.updateResolution(conn, m);
         }
-        Db.update(conn, "DELETE FROM aliases");
-        Db.update(conn, "INSERT INTO aliases (entity_id, alias, method, confidence, count)"
-                + " SELECT entity_id, surface,"
-                + "   (SELECT m2.method FROM mentions m2 WHERE m2.entity_id=m.entity_id AND m2.surface=m.surface"
-                + "    GROUP BY m2.method ORDER BY COUNT(*) DESC LIMIT 1),"
-                + "   ROUND(AVG(confidence), 3), COUNT(*)"
-                + " FROM mentions m WHERE entity_id IS NOT NULL GROUP BY entity_id, surface");
+        aliasesDao.rebuild(conn);
         Db.commit(conn);
     }
 }

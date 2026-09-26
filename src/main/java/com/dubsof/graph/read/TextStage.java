@@ -1,6 +1,8 @@
 package com.dubsof.graph.read;
 
 import com.dubsof.graph.Config;
+import com.dubsof.graph.dao.FilesDao;
+import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.ingest.FileStatus;
@@ -47,6 +49,7 @@ import java.util.regex.Pattern;
  */
 public class TextStage {
 
+    private static final FilesDao filesDao = new FilesDao();
     private static final Pattern PHOTO_NAME = Pattern.compile("^(IMG|MKT)_\\d+\\.jpe?g$", Pattern.CASE_INSENSITIVE);
 
     /** Thrown by a native parser when the file has no text layer. */
@@ -62,34 +65,30 @@ public class TextStage {
         for (String k : new String[] {"native", "ocr", "ocr_pending", "corrupt", "empty", "skipped_photos"}) {
             stats.put(k, 0);
         }
-        List<Map<String, Object>> rows = Db.query(conn,
-                "SELECT * FROM files WHERE status IN (?,?) AND duplicate_of IS NULL",
-                FileStatus.NEW.value(), FileStatus.NEEDS_OCR.value());
-        List<Map<String, Object>> ocrQueue = new ArrayList<Map<String, Object>>();
-        for (Map<String, Object> row : rows) {
-            long id = Db.id(row.get("id"));
-            FileKind kind = FileKind.fromValue((String) row.get("kind"));
-            if (kind == FileKind.ZIP) {
-                Db.update(conn, "UPDATE files SET status=? WHERE id=?", FileStatus.CONTAINER.value(), id);
+        List<FileRow> rows = filesDao.findOriginalsWithStatus(conn, FileStatus.NEW, FileStatus.NEEDS_OCR);
+        List<FileRow> ocrQueue = new ArrayList<FileRow>();
+        for (FileRow row : rows) {
+            if (row.kind == FileKind.ZIP) {
+                filesDao.updateStatus(conn, row.id, FileStatus.CONTAINER);
                 continue;
             }
-            byte[] data = Files.readAllBytes(new File((String) row.get("blob_path")).toPath());
+            byte[] data = Files.readAllBytes(new File(row.blobPath).toPath());
             try {
-                String text = Text.truncate(readNative(kind, data), Config.MAX_TEXT_CHARS);
+                String text = Text.truncate(readNative(row.kind, data), Config.MAX_TEXT_CHARS);
                 FileStatus status = Text.isBlank(text) ? FileStatus.EMPTY : FileStatus.OK;
                 increment(stats, status == FileStatus.OK ? "native" : "empty");
-                Db.update(conn, "UPDATE files SET text=?, text_source='native', status=? WHERE id=?", text, status.value(), id);
+                filesDao.updateText(conn, row.id, text, "native", status);
             } catch (NeedsOcr e) {
                 if (wantsOcr(row)) {
                     ocrQueue.add(row);
                 } else {
                     increment(stats, "skipped_photos");
-                    Db.update(conn, "UPDATE files SET status=? WHERE id=?", FileStatus.EMPTY.value(), id);
+                    filesDao.updateStatus(conn, row.id, FileStatus.EMPTY);
                 }
             } catch (Exception e) {   // unreadable, truncated or mislabelled files
                 increment(stats, "corrupt");
-                Db.update(conn, "UPDATE files SET status=?, error=? WHERE id=?", FileStatus.CORRUPT.value(),
-                        Text.truncate(e.getClass().getSimpleName() + ": " + e.getMessage(), 500), id);
+                filesDao.updateStatus(conn, row.id, FileStatus.CORRUPT,
+                        Text.truncate(e.getClass().getSimpleName() + ": " + e.getMessage(), 500));
             }
         }
         Db.commit(conn);
@@ -97,17 +96,15 @@ public class TextStage {
         if (!ocrQueue.isEmpty()) {
             runOcr(conn, ocrQueue, ocrBackend, apiKey, progress, stats);
         }
-        stats.put("ocr_pending", (int) Db.count(conn, "SELECT COUNT(*) FROM files WHERE status=?", FileStatus.NEEDS_OCR.value()));
+        stats.put("ocr_pending", (int) filesDao.countWithStatus(conn, FileStatus.NEEDS_OCR));
 
         // Byte-identical duplicates share their original's text.
-        Db.update(conn, "UPDATE files SET (text, text_source, status, error) ="
-                + " (SELECT o.text, o.text_source, o.status, o.error FROM files o WHERE o.id = files.duplicate_of)"
-                + " WHERE duplicate_of IS NOT NULL AND status != ?", FileStatus.SKIPPED.value());
+        filesDao.copyTextToDuplicates(conn);
         Db.commit(conn);
         return stats;
     }
 
-    private static void runOcr(Connection conn, List<Map<String, Object>> queue, String backend, String apiKey,
+    private static void runOcr(Connection conn, List<FileRow> queue, String backend, String apiKey,
                                Progress progress, Map<String, Integer> stats) throws Exception {
         final CachedReader reader;
         try {
@@ -118,8 +115,8 @@ public class TextStage {
             reader = new CachedReader(inner);
         } catch (ReaderUnavailableException e) {
             progress.update(2, "read", "OCR unavailable (" + e.getMessage() + "); " + queue.size() + " image-only files left unread");
-            for (Map<String, Object> row : queue) {
-                Db.update(conn, "UPDATE files SET status=? WHERE id=?", FileStatus.NEEDS_OCR.value(), row.get("id"));
+            for (FileRow row : queue) {
+                filesDao.updateStatus(conn, row.id, FileStatus.NEEDS_OCR);
             }
             Db.commit(conn);
             return;
@@ -128,15 +125,14 @@ public class TextStage {
         ExecutorService pool = Executors.newFixedThreadPool(Config.OCR_WORKERS);
         try {
             CompletionService<String[]> done = new ExecutorCompletionService<String[]>(pool);
-            for (final Map<String, Object> row : queue) {
+            for (final FileRow row : queue) {
                 done.submit(new Callable<String[]>() {
                     /** Returns {file id, text, error}: exactly one of text / error is set. */
                     public String[] call() {
-                        String id = String.valueOf(row.get("id"));
+                        String id = String.valueOf(row.id);
                         try {
-                            byte[] data = Files.readAllBytes(new File((String) row.get("blob_path")).toPath());
-                            FileKind kind = FileKind.fromValue((String) row.get("kind"));
-                            String text = reader.readWithHash((String) row.get("sha256"), data, kind, (String) row.get("path"));
+                            byte[] data = Files.readAllBytes(new File(row.blobPath).toPath());
+                            String text = reader.readWithHash(row.sha256, data, row.kind, row.path);
                             return new String[] {id, text, null};
                         } catch (Exception e) {
                             return new String[] {id, null, "OCR failed: " + e.getMessage()};
@@ -148,12 +144,11 @@ public class TextStage {
             for (int i = 1; i <= queue.size(); i++) {
                 String[] r = done.take().get();
                 if (r[2] == null) {
-                    Db.update(conn, "UPDATE files SET text=?, text_source=?, status=?, error=NULL WHERE id=?",
-                            r[1], reader.name(), (Text.isBlank(r[1]) ? FileStatus.EMPTY : FileStatus.OK).value(), Long.parseLong(r[0]));
+                    filesDao.updateText(conn, Long.parseLong(r[0]), r[1], reader.name(),
+                            Text.isBlank(r[1]) ? FileStatus.EMPTY : FileStatus.OK);
                     increment(stats, "ocr");
                 } else {   // stays waiting for the next OCR run
-                    Db.update(conn, "UPDATE files SET status=?, error=? WHERE id=?", FileStatus.NEEDS_OCR.value(),
-                            Text.truncate(r[2], 500), Long.parseLong(r[0]));
+                    filesDao.updateStatus(conn, Long.parseLong(r[0]), FileStatus.NEEDS_OCR, Text.truncate(r[2], 500));
                 }
                 if (i % 5 == 0 || i == queue.size()) {
                     Db.commit(conn);
@@ -166,12 +161,11 @@ public class TextStage {
         }
     }
 
-    private static boolean wantsOcr(Map<String, Object> row) {
-        String path = (String) row.get("path");
-        String[] members = path.split(Pattern.quote("::"));
+    private static boolean wantsOcr(FileRow row) {
+        String[] members = row.path.split(Pattern.quote("::"));
         String name = members[members.length - 1];
         name = name.substring(name.lastIndexOf('/') + 1);
-        FileKind kind = FileKind.fromValue((String) row.get("kind"));
+        FileKind kind = row.kind;
         if (kind == FileKind.JPG && PHOTO_NAME.matcher(name).matches() && !Config.OCR_PHOTOS) {
             return false;
         }

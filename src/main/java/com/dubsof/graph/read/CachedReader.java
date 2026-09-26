@@ -1,6 +1,7 @@
 package com.dubsof.graph.read;
 
 import com.dubsof.graph.Config;
+import com.dubsof.graph.dao.OcrCacheDao;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.util.Text;
@@ -16,11 +17,12 @@ public class CachedReader implements TextReader {
 
     private final TextReader inner;
     private final Connection cache;
+    private final OcrCacheDao ocrCacheDao = new OcrCacheDao();
 
     public CachedReader(TextReader inner) throws SQLException {
         this.inner = inner;
         this.cache = Db.open(Config.OCR_CACHE_FILE, true);
-        Db.update(cache, "CREATE TABLE IF NOT EXISTS ocr (sha256 TEXT, backend TEXT, text TEXT, PRIMARY KEY (sha256, backend))");
+        ocrCacheDao.createTable(cache);
     }
 
     public String name() {
@@ -38,14 +40,14 @@ public class CachedReader implements TextReader {
         }
         String text = inner.read(data, kind, filename);
         synchronized (cache) {
-            Db.update(cache, "INSERT OR REPLACE INTO ocr VALUES (?,?,?)", sha, inner.name(), text);
+            ocrCacheDao.save(cache, sha, inner.name(), text);
         }
         return text;
     }
 
     private String cached(String sha) throws SQLException {
         synchronized (cache) {
-            return (String) Db.scalar(cache, "SELECT text FROM ocr WHERE sha256=? AND backend=?", sha, inner.name());
+            return ocrCacheDao.findText(cache, sha, inner.name());
         }
     }
 

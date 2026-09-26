@@ -1,11 +1,15 @@
 package com.dubsof.graph.extract;
 
 import com.dubsof.graph.Config;
+import com.dubsof.graph.dao.FactsDao;
+import com.dubsof.graph.dao.FilesDao;
+import com.dubsof.graph.dao.IssuesDao;
+import com.dubsof.graph.dao.MentionsDao;
+import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.ingest.FileStatus;
 import com.dubsof.graph.ingest.Ingestor;
-import com.dubsof.graph.util.Json;
 import com.dubsof.graph.util.Text;
 
 import javax.mail.internet.AddressException;
@@ -59,6 +63,11 @@ public class Extractor {
         PREFIX_TYPES.put("DS", "datasheet");
         PREFIX_TYPES.put("ISO", "iso_certificate");
     }
+
+    private final FilesDao filesDao = new FilesDao();
+    private final MentionsDao mentionsDao = new MentionsDao();
+    private final FactsDao factsDao = new FactsDao();
+    private final IssuesDao issuesDao = new IssuesDao();
 
     /** One parser per document template. Returns true when it recognised the file. */
     interface Parser {
@@ -803,21 +812,19 @@ public class Extractor {
 
     /** Extracts every readable file and stores mentions, facts and issues. */
     public static Map<String, Integer> run(Connection conn) throws Exception {
-        Extractor extractor = new Extractor();
-        List<Map<String, Object>> rows = Db.query(conn, "SELECT * FROM files WHERE status != ? AND kind != ?",
-                FileStatus.SKIPPED.value(), FileKind.ZIP.value());
+        return new Extractor().extractAll(conn);
+    }
+
+    private Map<String, Integer> extractAll(Connection conn) throws Exception {
+        List<FileRow> files = filesDao.findExcept(conn, FileStatus.SKIPPED, FileKind.ZIP);
         Map<Long, Long> docMentionOfFile = new HashMap<Long, Long>();
-        List<FileRow> files = new ArrayList<FileRow>();
         int mentions = 0;
         int facts = 0;
-        for (Map<String, Object> r : rows) {
-            FileRow row = FileRow.of(r);
-            files.add(row);
-            Extraction ex = extractor.extractFile(row);
+        for (FileRow row : files) {
+            Extraction ex = extractFile(row);
             List<Long> ids = new ArrayList<Long>();
             for (Extraction.Mention mt : ex.mentions) {
-                ids.add(Db.insert(conn, "INSERT INTO mentions (file_id, etype, surface, role, attrs, confidence) VALUES (?,?,?,?,?,?)",
-                        row.id, mt.etype, mt.surface, mt.role, "{}", mt.confidence));
+                ids.add(mentionsDao.insert(conn, row.id, mt.etype, mt.surface, mt.role, mt.confidence));
             }
             // local mention indices in attrs (company_mention, org_mention) become database ids
             for (int i = 0; i < ex.mentions.size(); i++) {
@@ -826,13 +833,13 @@ public class Extractor {
                     Object v = e.getValue();
                     attrs.put(e.getKey(), e.getKey().endsWith("_mention") ? ids.get((Integer) v) : v);
                 }
-                Db.update(conn, "UPDATE mentions SET attrs=? WHERE id=?", Json.write(attrs), ids.get(i));
+                mentionsDao.updateAttrs(conn, ids.get(i), attrs);
             }
             for (Extraction.Fact f : ex.facts) {
-                Db.update(conn, "INSERT INTO facts (file_id, src, rel, dst) VALUES (?,?,?,?)", row.id, ids.get(f.src), f.rel, ids.get(f.dst));
+                factsDao.insert(conn, row.id, ids.get(f.src), f.rel, ids.get(f.dst));
             }
             for (String[] issue : ex.issues) {
-                Db.update(conn, "INSERT INTO issues (kind, severity, detail, file_id) VALUES (?,?,?,?)", issue[0], issue[1], issue[2], row.id);
+                issuesDao.insert(conn, issue[0], issue[1], issue[2], row.id, null);
             }
             if (ex.doc != null) {
                 docMentionOfFile.put(row.id, ids.get(ex.doc));
@@ -843,20 +850,20 @@ public class Extractor {
         // attachments and archive members point back at their container document
         for (FileRow row : files) {
             if (row.parentId != null && docMentionOfFile.containsKey(row.parentId) && docMentionOfFile.containsKey(row.id)) {
-                Db.update(conn, "INSERT INTO facts (file_id, src, rel, dst) VALUES (?,?,?,?)",
-                        row.id, docMentionOfFile.get(row.id), "ATTACHED_TO", docMentionOfFile.get(row.parentId));
+                factsDao.insert(conn, row.id, docMentionOfFile.get(row.id), "ATTACHED_TO", docMentionOfFile.get(row.parentId));
             }
         }
         fileIssues(conn);
         Db.commit(conn);
         Map<String, Integer> stats = new LinkedHashMap<String, Integer>();
-        stats.put("files", rows.size());
+        stats.put("files", files.size());
         stats.put("mentions", mentions);
         stats.put("facts", facts);
         return stats;
     }
 
-    private static void fileIssues(Connection conn) throws Exception {
+    /** Findings about the files themselves: wrong extension, unreadable, waiting for OCR. */
+    private void fileIssues(Connection conn) throws Exception {
         Map<String, FileKind> extKinds = new HashMap<String, FileKind>();   // extension -> the kind it promises
         extKinds.put(".pdf", FileKind.PDF);
         extKinds.put(".docx", FileKind.DOCX);
@@ -864,21 +871,14 @@ public class Extractor {
         extKinds.put(".png", FileKind.PNG);
         extKinds.put(".jpg", FileKind.JPG);
         extKinds.put(".eml", FileKind.EML);
-        for (Map<String, Object> r : Db.query(conn, "SELECT id, ext, kind, status, error, size FROM files WHERE status != ?",
-                FileStatus.SKIPPED.value())) {
-            String ext = (String) r.get("ext");
-            FileKind kind = FileKind.fromValue((String) r.get("kind"));
-            FileStatus status = FileStatus.fromValue((String) r.get("status"));
-            if (ext != null && extKinds.containsKey(ext) && extKinds.get(ext) != kind) {
-                Db.update(conn, "INSERT INTO issues (kind, severity, detail, file_id) VALUES ('mislabelled','info',?,?)",
-                        "extension " + ext + " but content is " + kind.value(), r.get("id"));
+        for (FileRow f : filesDao.findExcept(conn, FileStatus.SKIPPED)) {
+            if (f.ext != null && extKinds.containsKey(f.ext) && extKinds.get(f.ext) != f.kind) {
+                issuesDao.insert(conn, "mislabelled", "info", "extension " + f.ext + " but content is " + f.kind.value(), f.id, null);
             }
-            if (status == FileStatus.CORRUPT || Db.id(r.get("size")) == 0) {
-                Db.update(conn, "INSERT INTO issues (kind, severity, detail, file_id) VALUES ('unreadable','error',?,?)",
-                        r.get("error") != null ? r.get("error") : "empty file (0 bytes)", r.get("id"));
-            } else if (status == FileStatus.NEEDS_OCR) {
-                Db.update(conn, "INSERT INTO issues (kind, severity, detail, file_id) VALUES ('needs_ocr','info',?,?)",
-                        "image-only; content not read (enable an OCR backend)", r.get("id"));
+            if (f.status == FileStatus.CORRUPT || f.size == 0) {
+                issuesDao.insert(conn, "unreadable", "error", f.error != null ? f.error : "empty file (0 bytes)", f.id, null);
+            } else if (f.status == FileStatus.NEEDS_OCR) {
+                issuesDao.insert(conn, "needs_ocr", "info", "image-only; content not read (enable an OCR backend)", f.id, null);
             }
         }
     }

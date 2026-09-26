@@ -1,6 +1,8 @@
 package com.dubsof.graph.pipeline;
 
 import com.dubsof.graph.Config;
+import com.dubsof.graph.dao.EntitiesDao;
+import com.dubsof.graph.dao.MetaDao;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.Extractor;
 import com.dubsof.graph.ingest.Ingestor;
@@ -12,7 +14,6 @@ import java.io.File;
 import java.sql.Connection;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TimeZone;
 
@@ -21,6 +22,9 @@ import java.util.TimeZone;
  * Used by the CLI (Main) and by the "Analyse dataset" button (api.AnalysisJob).
  */
 public final class Pipeline {
+
+    private static final MetaDao metaDao = new MetaDao();
+    private static final EntitiesDao entitiesDao = new EntitiesDao();
 
     private Pipeline() {
     }
@@ -49,9 +53,9 @@ public final class Pipeline {
         Connection conn = Db.open(built, false);
         try {
             Db.init(conn);
-            Db.setMeta(conn, "data_root", dataRoot.getPath());
-            Db.setMeta(conn, "ocr_backend", ocr);
-            Db.setMeta(conn, "started_at", now());
+            metaDao.set(conn, "data_root", dataRoot.getPath());
+            metaDao.set(conn, "ocr_backend", ocr);
+            metaDao.set(conn, "started_at", now());
 
             progress.update(1, "ingest", "Scanning " + dataRoot);
             int n = Ingestor.run(conn, dataRoot, progress);
@@ -67,8 +71,8 @@ public final class Pipeline {
             result.entities = graphStages(conn, progress);
             result.read = read;
             result.built = built;
-            Db.setMeta(conn, "finished_at", now());
-            Db.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)");   // returns a status row
+            metaDao.set(conn, "finished_at", now());
+            Db.checkpoint(conn);
             return result;
         } finally {
             conn.close();
@@ -87,11 +91,7 @@ public final class Pipeline {
         t = System.currentTimeMillis();
         progress.update(5, "relate", "Running");
         progress.update(5, "relate", "Done: " + Relator.run(conn) + " in " + seconds(t));
-        Map<String, Long> entities = new LinkedHashMap<String, Long>();
-        for (Map<String, Object> r : Db.query(conn, "SELECT etype, COUNT(*) n FROM entities GROUP BY 1")) {
-            entities.put((String) r.get("etype"), Db.id(r.get("n")));
-        }
-        return entities;
+        return entitiesDao.countsByType(conn);
     }
 
     /**
