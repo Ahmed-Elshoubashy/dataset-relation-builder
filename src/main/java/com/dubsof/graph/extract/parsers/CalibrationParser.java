@@ -2,6 +2,7 @@ package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 
 import static com.dubsof.graph.extract.parsers.ParserUtils.document;
@@ -22,7 +23,7 @@ public class CalibrationParser implements Parser {
                 "date", field(text, "Calibration Date", "(.+)"), "result", field(text, "Result", "(.+)"));
         String tech = field(text, "Technician", "(.+)");
         if (tech != null) {
-            ex.fact(personWithOrg(ex, tech, "technician", owner(ex)), RelationType.AUTHORED, doc);
+            ex.fact(personWithOrg(ex, tech, MentionRole.TECHNICIAN, owner(ex)), RelationType.AUTHORED, doc);
         }
         return true;
     }

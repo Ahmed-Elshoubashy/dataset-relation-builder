@@ -17,11 +17,11 @@ public class Extraction {
     public static class Mention {
         public final EntityType etype;
         public final String surface;
-        public final String role;
+        public final MentionRole role;
         public final double confidence;
         public final Map<String, Object> attrs = new LinkedHashMap<>();
 
-        Mention(EntityType etype, String surface, String role, double confidence) {
+        Mention(EntityType etype, String surface, MentionRole role, double confidence) {
             this.etype = etype;
             this.surface = surface;
             this.role = role;
@@ -60,7 +60,7 @@ public class Extraction {
      * @param attrs alternating key, value pairs; null values are skipped
      */
     // TODO revisit this
-    public Integer addMentionWithConfidence(EntityType etype, String surface, String role, double confidence, Object... attrs) {
+    public Integer addMentionWithConfidence(EntityType etype, String surface, MentionRole role, double confidence, Object... attrs) {
         surface = stripChars(Text.collapseSpaces(surface), " ,;:");
         if (surface.isEmpty()) {
             return null;
@@ -69,7 +69,7 @@ public class Extraction {
         int index = -1;
         for (int i = 0; i < mentions.size(); i++) {
             Mention x = mentions.get(i);
-            if (x.etype == etype && x.surface.equals(surface) && x.role.equals(role)) {
+            if (x.etype == etype && x.surface.equals(surface) && x.role == role) {
                 found = x;
                 index = i;
                 break;
@@ -89,7 +89,7 @@ public class Extraction {
     }
 
     /** Adds a mention with full confidence. */
-    public Integer addMention(EntityType etype, String surface, String role, Object... attrs) {
+    public Integer addMention(EntityType etype, String surface, MentionRole role, Object... attrs) {
         return addMentionWithConfidence(etype, surface, role, 1.0, attrs);
     }
 

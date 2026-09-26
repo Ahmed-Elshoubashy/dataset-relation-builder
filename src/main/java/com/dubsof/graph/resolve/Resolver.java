@@ -13,6 +13,7 @@ import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.dao.row.MentionRow;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.EntityType;
+import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.resolve.NameMatcher.Match;
 import com.dubsof.graph.util.Text;
@@ -48,12 +49,6 @@ public class Resolver {
     static final double ACCEPT = 0.80;          // auto-merge at or above
     static final double GRAY = 0.65;            // between GRAY and ACCEPT: ask the adjudicator
     static final double AMBIGUOUS_MARGIN = 0.03;
-
-    /** Most to least trustworthy source of a company name. */
-    private static final List<String> COMPANY_ROLE_ORDER = java.util.Arrays.asList(
-            "folder", "implied_owner", "bill_to", "contract_party", "drawing_customer",
-            "letter_recipient", "vcard_org", "calendar_summary", "certified_company",
-            "screenshot_row", "certification_body", "training_provider", "filename", "email_domain");
 
     private final FilesDao filesDao = new FilesDao();
     private final MentionsDao mentionsDao = new MentionsDao();
@@ -181,11 +176,11 @@ public class Resolver {
         // Most trustworthy first (folder, bill_to, ... email_domain), so a good spelling creates each company
         // before weaker ones are matched against it. The sort is stable: same-role mentions keep their order.
         List<MentionRow> companyMentions = filterByType(EntityType.COMPANY);
-        companyMentions.sort(Comparator.comparingInt(a -> roleRank(a.role)));
+        companyMentions.sort(Comparator.comparingInt(m -> m.role.companyRank()));
 
         // Customer folder names are the anchors.
         for (MentionRow mention : companyMentions) {
-            if (mention.role.equals("folder")) {
+            if (mention.role == MentionRole.FOLDER) {
                 long id = entity(EntityType.COMPANY, NameMatcher.companyKey(mention.surface), mention.surface, attrs("role", "customer"));
                 entities.put(id, mention.surface);
                 anchors.add(id);
@@ -195,7 +190,7 @@ public class Resolver {
         Map<String, Object[]> memo = new HashMap<>();
 
         for (MentionRow m : companyMentions) {
-            boolean isDomain = m.role.equals("email_domain");
+            boolean isDomain = m.role == MentionRole.EMAIL_DOMAIN;
             if (isDomain && NameMatcher.GENERIC_DOMAINS.contains(m.surface.toLowerCase())) {
                 assign(m, null, "generic_domain", 0);
                 continue;
@@ -208,11 +203,6 @@ public class Resolver {
             Object[] r = memo.get(memoKey);
             assign(m, (Long) r[0], (String) r[1], (Double) r[2] * m.confidence);
         }
-    }
-
-    private static int roleRank(String role) {
-        int i = COMPANY_ROLE_ORDER.indexOf(role);
-        return i < 0 ? 99 : i;
     }
 
     /** Returns {entity id, method, score}. */
@@ -247,7 +237,7 @@ public class Resolver {
             Object[] best = scored.get(0);
             String candidate = entities.get(best[2]);
             Adjudicator.Verdict v = adjudicator.sameEntity(EntityType.COMPANY, m.surface, candidate,
-                    "seen as " + m.role + " in file " + files.get(m.fileId).path);
+                    "seen as " + m.role.value() + " in file " + files.get(m.fileId).path);
             if (v.same) {
                 return new Object[] {best[2], "adjudicated:" + best[1], Math.min((Double) best[0], v.confidence)};
             }
@@ -277,7 +267,7 @@ public class Resolver {
         }
         Collections.sort(withId, new Comparator<MentionRow>() {
             public int compare(MentionRow a, MentionRow b) {
-                return Boolean.compare(!a.role.equals("folder"), !b.role.equals("folder"));
+                return Boolean.compare(a.role != MentionRole.FOLDER, b.role != MentionRole.FOLDER);
             }
         });
         for (MentionRow m : withId) {
@@ -285,7 +275,7 @@ public class Resolver {
             Long company = entityOfMention(m.attrId("company_mention"));
             String title = m.surface.equals(jobId) ? null : m.surface;
             Map<String, Object> a = attrs("job_id", jobId, "title", title, "company_id", company,
-                    "source", m.role.equals("folder") ? "folder" : m.role,
+                    "source", m.role.value(),
                     "status", m.attrs.get("status"), "value", m.attrs.get("value"));
             EntityRow existing = entitiesDao.findByTypeAndKey(conn, EntityType.PROJECT, jobId);
             if (existing != null) {   // never overwrite what the folder said, except live status/value
@@ -299,7 +289,7 @@ public class Resolver {
                 a = keep;
             }
             long id = entity(EntityType.PROJECT, jobId, title != null ? jobId + " " + title : jobId, a);
-            if (m.role.equals("folder") && title != null) {
+            if (m.role == MentionRole.FOLDER && title != null) {
                 String tk = titleKey(title);
                 if (!byTitle.containsKey(tk)) {
                     byTitle.put(tk, new ArrayList<Long>());
@@ -309,7 +299,7 @@ public class Resolver {
                 }
                 companyOfProject.put(id, company);
             }
-            assign(m, id, "job_id", m.role.equals("folder") ? 1.0 : 0.95);
+            assign(m, id, "job_id", m.role == MentionRole.FOLDER ? 1.0 : 0.95);
         }
         for (List<Long> ids : byTitle.values()) {
             Collections.sort(ids);
@@ -318,7 +308,7 @@ public class Resolver {
         // 2. title-only mentions ('Job: Palletiser Line Upgrade') need the customer as context
         Map<Long, Long> folderProject = new HashMap<Long, Long>();
         for (MentionRow m : filterByType(EntityType.PROJECT)) {
-            if (m.role.equals("folder")) {
+            if (m.role == MentionRole.FOLDER) {
                 folderProject.put(m.fileId, m.entityId);
             }
         }
@@ -394,7 +384,7 @@ public class Resolver {
     private void people() throws Exception {
         Map<Long, Long> folderCompany = new HashMap<Long, Long>();
         for (MentionRow m : filterByType(EntityType.COMPANY)) {
-            if (m.role.equals("folder")) {
+            if (m.role == MentionRole.FOLDER) {
                 folderCompany.put(m.fileId, m.entityId);
             }
         }
@@ -540,7 +530,7 @@ public class Resolver {
         }
         Map<Long, Long> folderCompany = new HashMap<Long, Long>();
         for (MentionRow m : filterByType(EntityType.COMPANY)) {
-            if (m.role.equals("folder")) {
+            if (m.role == MentionRole.FOLDER) {
                 folderCompany.put(m.fileId, m.entityId);
             }
         }
@@ -548,7 +538,7 @@ public class Resolver {
         List<MentionRow> docs = filterByType(EntityType.DOCUMENT);
         Map<String, Set<Long>> partiesOfKey = new LinkedHashMap<String, Set<Long>>();
         for (MentionRow m : docs) {
-            if (m.role.equals("self")) {
+            if (m.role == MentionRole.SELF) {
                 String key = docKey(m);
                 if (!partiesOfKey.containsKey(key)) {
                     partiesOfKey.put(key, new LinkedHashSet<Long>());
@@ -576,14 +566,14 @@ public class Resolver {
         List<MentionRow> ordered = new ArrayList<MentionRow>(docs);
         Collections.sort(ordered, new Comparator<MentionRow>() {
             public int compare(MentionRow a, MentionRow b) {
-                return Boolean.compare(!a.role.equals("self"), !b.role.equals("self"));
+                return Boolean.compare(a.role != MentionRole.SELF, b.role != MentionRole.SELF);
             }
         });
         for (MentionRow m : ordered) {
             String key = docKey(m);
             Long counterparty = null;
             if (splitKeys.containsKey(key)) {
-                counterparty = m.role.equals("self") ? party.get(m.id) : folderCompany.get(m.fileId);
+                counterparty = m.role == MentionRole.SELF ? party.get(m.id) : folderCompany.get(m.fileId);
                 if (counterparty == null || !splitKeys.get(key).contains(counterparty)) {
                     assign(m, null, "ambiguous_number", 0);
                     continue;
@@ -591,11 +581,11 @@ public class Resolver {
                 key = key + "@" + counterparty;
             }
             long id = entity(EntityType.DOCUMENT, key, m.surface, null);
-            if (m.role.equals("self")) {
+            if (m.role == MentionRole.SELF) {
                 mergeDocAttrs(id, m);
             }
             String method = key.matches("^[A-Z]+-\\d.*") ? "doc_number" : "file_identity";
-            assign(m, id, method + (counterparty != null ? "+counterparty" : ""), m.role.equals("self") ? 1.0 : 0.9);
+            assign(m, id, method + (counterparty != null ? "+counterparty" : ""), m.role == MentionRole.SELF ? 1.0 : 0.9);
         }
     }
 

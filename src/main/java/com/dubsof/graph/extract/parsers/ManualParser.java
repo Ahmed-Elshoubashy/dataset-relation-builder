@@ -3,6 +3,7 @@ package com.dubsof.graph.extract.parsers;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.util.Text;
 
@@ -28,7 +29,7 @@ public class ManualParser implements Parser {
         Matcher d = Pattern.compile(DATE).matcher(text);
         Integer doc = document(ex, row, "manual", "manual:" + lines.get(0), lines.get(0) + " " + lines.get(1),
                 "date", d.find() ? d.group() : null);
-        ex.fact(doc, RelationType.DESCRIBES, ex.addMention(EntityType.PRODUCT, m.group(1), "manual_title", "code", m.group(1)));
+        ex.fact(doc, RelationType.DESCRIBES, ex.addMention(EntityType.PRODUCT, m.group(1), MentionRole.MANUAL_TITLE, "code", m.group(1)));
         return true;
     }
 }

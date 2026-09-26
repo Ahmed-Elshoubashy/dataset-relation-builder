@@ -111,7 +111,7 @@ public class Extractor {
         // Filename hints: 'INV-8002_Acme Corporation', 'DN-6041_Whitmore', 'GB-40_—_Datasheet_2'
         String filenameCompany = filenameDoc(stem)[2];
         if (filenameCompany != null) {
-            Integer c = ex.addMentionWithConfidence(EntityType.COMPANY, filenameCompany, "filename", 0.7, "truncated", Boolean.TRUE);
+            Integer c = ex.addMentionWithConfidence(EntityType.COMPANY, filenameCompany, MentionRole.FILENAME, 0.7, "truncated", Boolean.TRUE);
             if (PREFIX_TYPES.containsValue(ex.docMention().attrs.get("doc_type"))) {
                 ex.fact(ex.doc, RelationType.ISSUED_TO, c);
             }
@@ -120,7 +120,7 @@ public class Extractor {
         Matcher pm = Pattern.compile("^([A-Z]{2,4}-\\d{2,4})(?:-\\d+)?_").matcher(stem);
         
         if (pm.lookingAt() && !Pattern.compile("^(INV|QUO|PO|DN|DWG|CAL)-").matcher(stem).lookingAt()) {
-            ex.fact(ex.doc, RelationType.DESCRIBES, ex.addMentionWithConfidence(EntityType.PRODUCT, pm.group(1), "filename", 0.8, "code", pm.group(1)));
+            ex.fact(ex.doc, RelationType.DESCRIBES, ex.addMentionWithConfidence(EntityType.PRODUCT, pm.group(1), MentionRole.FILENAME, 0.8, "code", pm.group(1)));
         }
         
         ex.fact(project, RelationType.HAS_DOCUMENT, ex.doc);
@@ -141,13 +141,13 @@ public class Extractor {
         Integer project = null;
         
         if (row.folderCompany != null) {
-            company = ex.addMention(EntityType.COMPANY, row.folderCompany, "folder");
+            company = ex.addMention(EntityType.COMPANY, row.folderCompany, MentionRole.FOLDER);
         }
         
         if (row.folderJob != null) {
             Matcher jobMention = Ingestor.JOB_DIR.matcher(row.folderJob);
             if (jobMention.matches()) {
-                project = ex.addMention(EntityType.PROJECT, jobMention.group(2), "folder", "job_id", jobMention.group(1), "company_mention", company);
+                project = ex.addMention(EntityType.PROJECT, jobMention.group(2), MentionRole.FOLDER, "job_id", jobMention.group(1), "company_mention", company);
                 ex.fact(company, RelationType.HAS_PROJECT, project);
             }
         }

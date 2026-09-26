@@ -18,6 +18,7 @@ import com.dubsof.graph.dao.row.MisfiledDocumentRow;
 import com.dubsof.graph.dao.row.MultiCustomerDocumentRow;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.EntityType;
+import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.FileStatus;
 import com.dubsof.graph.resolve.NameMatcher;
@@ -137,7 +138,7 @@ public class Relator {
         Pattern pattern = Pattern.compile("\\b(" + alternatives + ")\\b");
 
         Map<Long, Long> docOfFile = new HashMap<Long, Long>();
-        for (MentionRow m : mentionsDao.findResolvedWithRole(conn, "self")) {
+        for (MentionRow m : mentionsDao.findResolvedWithRole(conn, MentionRole.SELF)) {
             docOfFile.put(m.fileId, m.entityId);
         }
         Map<Long, Set<Long>> linked = new HashMap<Long, Set<Long>>();
@@ -165,7 +166,7 @@ public class Relator {
                 if (here.contains(entity)) {
                     continue;
                 }
-                mentionsDao.insertResolved(conn, f.id, EntityType.fromValue(target[1]), name, "text_mention", entity, "gazetteer", 0.6);
+                mentionsDao.insertResolved(conn, f.id, EntityType.fromValue(target[1]), name, MentionRole.TEXT_MENTION, entity, "gazetteer", 0.6);
                 Set<Long> one = new TreeSet<Long>();
                 one.add(f.id);
                 upsert(doc, entity, RelationType.MENTIONS, one);

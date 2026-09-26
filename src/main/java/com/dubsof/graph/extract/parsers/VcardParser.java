@@ -3,6 +3,7 @@ package com.dubsof.graph.extract.parsers;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.FileKind;
 
@@ -24,8 +25,8 @@ public class VcardParser implements Parser {
         String mail = field(text, "EMAIL", "(.+)");
         String id = (mail != null ? mail : fn != null ? fn : "").toLowerCase();
         Integer doc = document(ex, row, "contact_card", "vcard:" + id, "Contact card: " + fn);
-        Integer orgMention = ex.addMention(EntityType.COMPANY, orEmpty(org), "vcard_org");
-        Integer p = personWithOrg(ex, orEmpty(fn), "vcard", orgMention,
+        Integer orgMention = ex.addMention(EntityType.COMPANY, orEmpty(org), MentionRole.VCARD_ORG);
+        Integer p = personWithOrg(ex, orEmpty(fn), MentionRole.VCARD, orgMention,
                 "email", mail != null ? mail.toLowerCase() : null, "phone", field(text, "TEL", "(.+)"));
         if (mail != null) {
             ex.fact(p, RelationType.WORKS_FOR, companyFromDomain(ex, mail));

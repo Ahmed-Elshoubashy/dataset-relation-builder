@@ -3,6 +3,7 @@ package com.dubsof.graph.extract.parsers;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.util.Text;
 
@@ -26,11 +27,11 @@ public class ContractParser implements Parser {
         String stem = baseStem(stem(row.path));
         String key = "contract:" + (row.folderJob != null ? row.folderJob : row.path) + ":" + stem;
         Integer doc = document(ex, row, "contract", key, kind + " (" + stem.replace("Contract_", "").replace("_", " ") + ")");
-        ex.fact(ex.addMention(EntityType.COMPANY, m.group(1), "contract_party"), RelationType.PARTY_TO, doc);
-        ex.fact(ex.addMention(EntityType.COMPANY, m.group(2), "contract_party"), RelationType.PARTY_TO, doc);
+        ex.fact(ex.addMention(EntityType.COMPANY, m.group(1), MentionRole.CONTRACT_PARTY), RelationType.PARTY_TO, doc);
+        ex.fact(ex.addMention(EntityType.COMPANY, m.group(2), MentionRole.CONTRACT_PARTY), RelationType.PARTY_TO, doc);
         String job = field(text, "Relating to", "(.+)");
         if (job != null) {
-            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, job, "doc_job_field", 0.9, "company_mention", folderCompany), RelationType.HAS_DOCUMENT, doc);
+            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, job, MentionRole.DOC_JOB_FIELD, 0.9, "company_mention", folderCompany), RelationType.HAS_DOCUMENT, doc);
         }
         return true;
     }

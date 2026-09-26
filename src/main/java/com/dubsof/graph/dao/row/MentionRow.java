@@ -1,6 +1,7 @@
 package com.dubsof.graph.dao.row;
 
 import com.dubsof.graph.extract.EntityType;
+import com.dubsof.graph.extract.MentionRole;
 
 import java.util.Map;
 
@@ -16,7 +17,7 @@ public class MentionRow {
     /** The text as written ("BFG Ltd"). */
     public String surface;
     /** Where it was seen (bill_to, folder, email_from, ...). */
-    public String role;
+    public MentionRole role;
     public Map<String, Object> attrs;
     public Long entityId;
     /** The matching rule that linked it (abbreviation, typo, email ...). */

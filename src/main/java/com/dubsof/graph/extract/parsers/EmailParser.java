@@ -3,6 +3,7 @@ package com.dubsof.graph.extract.parsers;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.FileKind;
 
@@ -41,17 +42,18 @@ public class EmailParser implements Parser {
         String stem = stem(row.path);
         Integer doc = document(ex, row, "email", "email:" + stem, subject.isEmpty() ? stem : subject,
                 "date", hdr.get("Date"), "subject", subject);
-        String[][] roles = {{"From", "email_from"}, {"To", "email_to"}, {"Cc", "email_cc"}};   // header, mention role
-        for (String[] r : roles) {
-            for (InternetAddress a : addresses(hdr.get(r[0]))) {
+        String[] headers = {"From", "To", "Cc"};
+        MentionRole[] roles = {MentionRole.EMAIL_FROM, MentionRole.EMAIL_TO, MentionRole.EMAIL_CC};
+        for (int i = 0; i < headers.length; i++) {
+            for (InternetAddress a : addresses(hdr.get(headers[i]))) {
                 String addr = a.getAddress();
                 if (addr == null || addr.isEmpty()) {
                     continue;
                 }
                 Integer org = companyFromDomain(ex, addr);
                 String name = a.getPersonal() != null ? a.getPersonal() : nameFromAddress(addr);
-                RelationType rel = r[0].equals("From") ? RelationType.SENT : RelationType.RECEIVED;
-                ex.fact(personWithOrg(ex, name, r[1], org, "email", addr.toLowerCase()), rel, doc);
+                RelationType rel = headers[i].equals("From") ? RelationType.SENT : RelationType.RECEIVED;
+                ex.fact(personWithOrg(ex, name, roles[i], org, "email", addr.toLowerCase()), rel, doc);
             }
         }
         // project by title in the subject or body
@@ -70,7 +72,7 @@ public class EmailParser implements Parser {
             }
         }
         if (title != null) {
-            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, title, "email_subject", 0.8, "company_mention", folderCompany), RelationType.HAS_DOCUMENT, doc);
+            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, title, MentionRole.EMAIL_SUBJECT, 0.8, "company_mention", folderCompany), RelationType.HAS_DOCUMENT, doc);
         }
         refs(ex, subject + "\n" + body, null);
         return true;

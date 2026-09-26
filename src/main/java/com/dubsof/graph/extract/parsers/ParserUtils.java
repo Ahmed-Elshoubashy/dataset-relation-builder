@@ -4,6 +4,7 @@ import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.Ingestor;
 
@@ -53,7 +54,7 @@ public final class ParserUtils {
         all[4] = "version";
         all[5] = baseStem(stem).equals(stem) ? null : stem;
         System.arraycopy(attrs, 0, all, 6, attrs.length);
-        ex.doc = ex.addMention(EntityType.DOCUMENT, title != null ? title : key, "self", all);
+        ex.doc = ex.addMention(EntityType.DOCUMENT, title != null ? title : key, MentionRole.SELF, all);
         return ex.doc;
     }
 
@@ -66,11 +67,11 @@ public final class ParserUtils {
             if (key.equals(skipKey) || prefix.equals("SPEC") || prefix.equals("DS") || prefix.equals("ISO")) {
                 continue;
             }
-            ex.fact(ex.doc, RelationType.REFERENCES, ex.addMentionWithConfidence(EntityType.DOCUMENT, key, "reference", 0.9, "key", key, "doc_type", PREFIX_TYPES.get(prefix)));
+            ex.fact(ex.doc, RelationType.REFERENCES, ex.addMentionWithConfidence(EntityType.DOCUMENT, key, MentionRole.REFERENCE, 0.9, "key", key, "doc_type", PREFIX_TYPES.get(prefix)));
         }
         Matcher j = JOB_ID.matcher(text);
         while (j.find()) {
-            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, j.group(), "reference", 0.9, "job_id", j.group()), RelationType.HAS_DOCUMENT, ex.doc);
+            ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, j.group(), MentionRole.REFERENCE, 0.9, "job_id", j.group()), RelationType.HAS_DOCUMENT, ex.doc);
         }
     }
 
@@ -85,7 +86,7 @@ public final class ParserUtils {
         return m.find() ? m.group(1).trim() : null;
     }
 
-    public static Integer personWithOrg(Extraction ex, String name, String role, Integer org, Object... attrs) {
+    public static Integer personWithOrg(Extraction ex, String name, MentionRole role, Integer org, Object... attrs) {
         String clean = cleanPerson(name);
         if (clean == null) {
             return null;
@@ -100,12 +101,12 @@ public final class ParserUtils {
     }
 
     public static Integer owner(Extraction ex) {
-        return ex.addMentionWithConfidence(EntityType.COMPANY, Config.ownerName, "implied_owner", 0.8);
+        return ex.addMentionWithConfidence(EntityType.COMPANY, Config.ownerName, MentionRole.IMPLIED_OWNER, 0.8);
     }
 
     public static Integer companyFromDomain(Extraction ex, String addr) {
         String domain = addr.substring(addr.lastIndexOf('@') + 1).toLowerCase();
-        return ex.addMentionWithConfidence(EntityType.COMPANY, domain, "email_domain", 0.9, "domain", domain);
+        return ex.addMentionWithConfidence(EntityType.COMPANY, domain, MentionRole.EMAIL_DOMAIN, 0.9, "domain", domain);
     }
 
     public static String cleanPerson(String name) {

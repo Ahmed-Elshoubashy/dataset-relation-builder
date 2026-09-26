@@ -2,6 +2,7 @@ package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.Extraction;
+import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 
 import java.util.regex.Matcher;
@@ -23,7 +24,7 @@ public class ReportParser implements Parser {
         }
         String stem = stem(row.path);
         Integer doc = document(ex, row, "report", "report:" + stem, stem.replace("_", " "), "date", m.group(1));
-        ex.fact(personWithOrg(ex, m.group(2), "report_author", owner(ex)), RelationType.AUTHORED, doc);
+        ex.fact(personWithOrg(ex, m.group(2), MentionRole.REPORT_AUTHOR, owner(ex)), RelationType.AUTHORED, doc);
         return true;
     }
 }
