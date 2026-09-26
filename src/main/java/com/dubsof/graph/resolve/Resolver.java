@@ -20,7 +20,7 @@ import com.dubsof.graph.util.Text;
 
 import java.sql.Connection;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -28,27 +28,44 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
- * Stage 4: cluster mentions into entities.
+ * Stage 4: decide which real-world thing each mention refers to.
  *
- * Order matters: companies first (people and projects use the resolved company as
- * context), then projects, people, documents and products. Every mention ends up with
- * entity_id + method + confidence, so every link can explain why two spellings were
- * judged to be the same thing.
+ * Extract wrote mentions ("ACME Corp" as bill_to in file 206, "Acme Corporation" as folder, ...) without
+ * deciding anything. This class groups them into entities and gives every mention:
+ * <ul>
+ *   <li>{@code entity_id}: the entity it refers to (null when it cannot be decided),</li>
+ *   <li>{@code method}: the rule that decided it (normalized, acronym, job_id, email, ...),</li>
+ *   <li>{@code confidence}: how sure that rule is.</li>
+ * </ul>
+ *
+ * The order of the steps matters. Companies come first because the other types use them as context:
+ * a project title is matched within a customer, a person's name within an organisation, and a reused
+ * document number is split by customer.
+ *
+ * All mentions are loaded into memory at the start, changed in memory, and written back once at the end.
+ * Entities are written to the database as soon as they are created, because later steps look them up.
  */
 public class Resolver {
 
-    /** Relations whose other end tells which customer (or product) a document belongs to. */
-    private static final List<RelationType> COUNTERPARTY_RELATIONS = java.util.Arrays.asList(
+    /** A company match at or above this score is accepted automatically. */
+    static final double ACCEPT = 0.80;
+    /** Between GRAY and ACCEPT, the Adjudicator decides; below GRAY, the name is a new company. */
+    static final double GRAY = 0.65;
+    /** When the two best matches are closer than this, the match is reported as ambiguous. */
+    static final double AMBIGUOUS_MARGIN = 0.03;
+
+    /** Facts whose other end names the customer (or product) a document belongs to. */
+    private static final List<RelationType> COUNTERPARTY_RELATIONS = Arrays.asList(
             RelationType.ISSUED_TO, RelationType.ADDRESSED_TO, RelationType.PARTY_TO, RelationType.DESCRIBES);
 
-    static final double ACCEPT = 0.80;          // auto-merge at or above
-    static final double GRAY = 0.65;            // between GRAY and ACCEPT: ask the adjudicator
-    static final double AMBIGUOUS_MARGIN = 0.03;
+    /** A document key that is a real document number (INV-8034, DWG-9296, ...), not a file identity. */
+    private static final String DOCUMENT_NUMBER = "^[A-Z]+-\\d.*";
 
     private final FilesDao filesDao = new FilesDao();
     private final MentionsDao mentionsDao = new MentionsDao();
@@ -59,21 +76,76 @@ public class Resolver {
 
     private final Connection conn;
     private final Adjudicator adjudicator;
-    /** Every mention, held in memory while resolving and written back at the end. */
-    private final Map<Long, MentionRow> mentions = new LinkedHashMap<>();
-    private final Map<Long, FileRow> files = new HashMap<>();
-    private final Map<String, Integer> stats = new TreeMap<>();
-    private final Set<Long> anchors = new HashSet<>();   // owner + folder customers: preferred on ties
-    private long owner;
+
+    /** Every mention by id. Resolving changes these rows in memory; saveResolutions() writes them back. */
+    private final Map<Long, MentionRow> mentionsById = new LinkedHashMap<>();
+    private final Map<Long, FileRow> filesById = new HashMap<>();
+    /** "etype:method" -> number of mentions resolved that way (the stage's summary). */
+    private final Map<String, Integer> methodCounts = new TreeMap<>();
+    /** The owner and the customer-folder companies: certain, so they win ties when matching. */
+    private final Set<Long> anchorCompanyIds = new HashSet<>();
+    private long ownerCompanyId;
+
+    /** One possible company for a mention: which company, how well it matched and by which rule. */
+    private static class CompanyCandidate {
+        final long companyId;
+        final double score;
+        final String method;
+
+        CompanyCandidate(long companyId, double score, String method) {
+            this.companyId = companyId;
+            this.score = score;
+            this.method = method;
+        }
+    }
+
+    /** The decision for one company spelling: the company, the rule, and the score. */
+    private static class CompanyDecision {
+        final long companyId;
+        final String method;
+        final double score;
+
+        CompanyDecision(long companyId, String method, double score) {
+            this.companyId = companyId;
+            this.method = method;
+            this.score = score;
+        }
+    }
+
+    /** A person already known under a name: their organisation (null when unknown) and their entity id. */
+    private static class KnownPerson {
+        final Long orgId;
+        final long personId;
+
+        KnownPerson(Long orgId, long personId) {
+            this.orgId = orgId;
+            this.personId = personId;
+        }
+
+        // needed because KnownPerson is kept in sets: the same (org, person) pair must be counted once
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof KnownPerson)) {
+                return false;
+            }
+            KnownPerson that = (KnownPerson) other;
+            return Objects.equals(orgId, that.orgId) && personId == that.personId;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(orgId, personId);
+        }
+    }
 
     public Resolver(Connection conn, Adjudicator adjudicator) throws Exception {
         this.conn = conn;
         this.adjudicator = adjudicator;
-        for (MentionRow m : mentionsDao.findAll(conn)) {
-            mentions.put(m.id, m);
+        for (MentionRow mention : mentionsDao.findAll(conn)) {
+            mentionsById.put(mention.id, mention);
         }
-        for (FileRow f : filesDao.findAll(conn)) {
-            files.put(f.id, f);
+        for (FileRow file : filesDao.findAll(conn)) {
+            filesById.put(file.id, file);
         }
     }
 
@@ -82,569 +154,561 @@ public class Resolver {
     }
 
     public Map<String, Integer> run() throws Exception {
-        companies();
-        projects();
-        people();
-        documents();
-        products();
-        flush();
-        return stats;
-    }
-
-    // ================================================================ helpers
-
-    /** Finds or creates an entity; new attrs are merged into existing ones. */
-    private long entity(EntityType etype, String key, String name, Map<String, Object> attrs) throws Exception {
-        EntityRow row = entitiesDao.findByTypeAndKey(conn, etype, key);
-        if (row != null) {
-            if (attrs != null && !attrs.isEmpty()) {
-                Map<String, Object> merged = row.attrs;
-                for (Map.Entry<String, Object> e : attrs.entrySet()) {
-                    if (e.getValue() != null) {
-                        merged.put(e.getKey(), e.getValue());
-                    }
-                }
-                entitiesDao.updateAttrs(conn, row.id, merged);
-            }
-            return row.id;
-        }
-        Map<String, Object> filteredAttributes = new LinkedHashMap<>();
-        if (attrs != null) {
-            for (Map.Entry<String, Object> e : attrs.entrySet()) {
-                if (e.getValue() != null) {
-                    filteredAttributes.put(e.getKey(), e.getValue());
-                }
-            }
-        }
-        return entitiesDao.insert(conn, etype, name, key, filteredAttributes);
-    }
-
-    private Map<String, Object> entityAttrs(long id) throws Exception {
-        return entitiesDao.findById(conn, id).attrs;
-    }
-
-    private void saveEntityAttrs(long id, Map<String, Object> attrs) throws Exception {
-        entitiesDao.updateAttrs(conn, id, attrs);
-    }
-
-    private void assign(MentionRow m, Long entityId, String method, double confidence) {
-        m.entityId = entityId;
-        m.method = method;
-        m.confidence = confidence;
-        String k = m.etype.value() + ":" + method;
-        stats.put(k, stats.containsKey(k) ? stats.get(k) + 1 : 1);
-    }
-
-    private void issue(String kind, String severity, String detail, Long fileId, Long entityId) throws Exception {
-        issuesDao.insert(conn, kind, severity, detail, fileId, entityId);
-    }
-
-    private List<MentionRow> filterByType(EntityType etype) {
-        List<MentionRow> filteredMentions = new ArrayList<>();
-        for (MentionRow m : mentions.values()) {
-            if (m.etype == etype) {
-                filteredMentions.add(m);
-            }
-        }
-        return filteredMentions;
-    }
-
-    private static Map<String, Object> attrs(Object... kv) {
-        Map<String, Object> m = new LinkedHashMap<String, Object>();
-        for (int i = 0; i + 1 < kv.length; i += 2) {
-            m.put((String) kv[i], kv[i + 1]);
-        }
-        return m;
-    }
-
-    private Long entityOfMention(Long mentionId) {
-        MentionRow m = mentionId == null ? null : mentions.get(mentionId);
-        return m == null ? null : m.entityId;
+        resolveCompanies();
+        resolveProjects();
+        resolvePeople();
+        resolveDocuments();
+        resolveProducts();
+        saveResolutions();
+        return methodCounts;
     }
 
     // ================================================================ companies
 
-    private void companies() throws Exception {
-        Map<Long, String> entities = new LinkedHashMap<>();   // id -> canonical name
-        
-        owner = entity(EntityType.COMPANY, NameMatcher.companyKey(Config.ownerName), Config.ownerName,
-                attrs("role", "owner", "domain", Config.ownerDomain));
-        
-        entities.put(owner, Config.ownerName);
-        anchors.add(owner);
-        
-        // Most trustworthy first (folder, bill_to, ... email_domain), so a good spelling creates each company
-        // before weaker ones are matched against it. The sort is stable: same-role mentions keep their order.
-        List<MentionRow> companyMentions = filterByType(EntityType.COMPANY);
-        companyMentions.sort(Comparator.comparingInt(m -> m.role.companyRank()));
+    /**
+     * Gives every company mention its company. The owner and the customer folders are created first
+     * as anchors; then every mention, most trustworthy role first, either matches a known company
+     * or becomes a new one that later mentions can match.
+     */
+    private void resolveCompanies() throws Exception {
+        // id -> name of every company known so far; each mention is compared against all of them
+        Map<Long, String> knownCompanies = new LinkedHashMap<>();
 
-        // Customer folder names are the anchors.
+        // 1. The owner of the file share (detected from letterheads and e-mail senders).
+        ownerCompanyId = findOrCreateEntity(EntityType.COMPANY, NameMatcher.companyKey(Config.ownerName), Config.ownerName,
+                attributes("role", "owner", "domain", Config.ownerDomain));
+        knownCompanies.put(ownerCompanyId, Config.ownerName);
+        anchorCompanyIds.add(ownerCompanyId);
+
+        // Most trustworthy role first (folder, bill_to, ..., filename, email_domain), so a good spelling
+        // creates each company before weaker ones are matched against it. The sort is stable: mentions
+        // with the same role keep their order.
+        List<MentionRow> companyMentions = mentionsOfType(EntityType.COMPANY);
+        companyMentions.sort(Comparator.comparingInt(mention -> mention.role.companyRank()));
+
+        // 2. Customer folder names (Customers/<name>/): typed by a person, so they are always right.
         for (MentionRow mention : companyMentions) {
             if (mention.role == MentionRole.FOLDER) {
-                long id = entity(EntityType.COMPANY, NameMatcher.companyKey(mention.surface), mention.surface, attrs("role", "customer"));
-                entities.put(id, mention.surface);
-                anchors.add(id);
+                long companyId = findOrCreateEntity(EntityType.COMPANY, NameMatcher.companyKey(mention.surface), mention.surface,
+                        attributes("role", "customer"));
+                knownCompanies.put(companyId, mention.surface);
+                anchorCompanyIds.add(companyId);
             }
         }
-        
-        Map<String, Object[]> memo = new HashMap<>();
 
-        for (MentionRow m : companyMentions) {
-            boolean isDomain = m.role == MentionRole.EMAIL_DOMAIN;
-            if (isDomain && NameMatcher.GENERIC_DOMAINS.contains(m.surface.toLowerCase())) {
-                assign(m, null, "generic_domain", 0);
+        // 3. Every company mention, including the folder ones (they simply match their own anchor).
+        //    The same spelling appears in many files, so each spelling is decided once and reused.
+        Map<String, CompanyDecision> decisionBySpelling = new HashMap<>();
+        for (MentionRow mention : companyMentions) {
+            boolean isDomain = mention.role == MentionRole.EMAIL_DOMAIN;
+
+            // gmail.com, outlook.com, ...: a free e-mail provider says nothing about someone's employer
+            if (isDomain && NameMatcher.GENERIC_DOMAINS.contains(mention.surface.toLowerCase())) {
+                assignEntity(mention, null, "generic_domain", 0);
                 continue;
             }
-            boolean truncated = Boolean.TRUE.equals(m.attrs.get("truncated"));
-            String memoKey = m.surface + "|" + isDomain + "|" + truncated;
-            if (!memo.containsKey(memoKey)) {
-                memo.put(memoKey, resolveCompany(m, isDomain, truncated, entities));
+
+            // a name cut off in a filename ("Redwood Timber & J") is matched more loosely
+            boolean truncated = Boolean.TRUE.equals(mention.attrs.get("truncated"));
+            String spelling = mention.surface + "|" + isDomain + "|" + truncated;
+
+            CompanyDecision decision = decisionBySpelling.get(spelling);
+            if (decision == null) {
+                decision = decideCompany(mention, isDomain, truncated, knownCompanies);
+                decisionBySpelling.put(spelling, decision);
             }
-            Object[] r = memo.get(memoKey);
-            assign(m, (Long) r[0], (String) r[1], (Double) r[2] * m.confidence);
+            // a weak source (e.g. filename, 0.7) lowers the confidence of even a perfect name match
+            assignEntity(mention, decision.companyId, decision.method, decision.score * mention.confidence);
         }
     }
 
-    /** Returns {entity id, method, score}. */
-    private Object[] resolveCompany(MentionRow m, boolean isDomain, boolean truncated, Map<Long, String> entities) throws Exception {
-        final List<Object[]> scored = new ArrayList<Object[]>();   // {score, method, entity id}
-        for (Map.Entry<Long, String> e : entities.entrySet()) {
-            Match match = isDomain ? NameMatcher.matchDomain(m.surface, e.getValue())
-                    : NameMatcher.matchCompany(m.surface, e.getValue(), truncated);
+    /**
+     * Finds the company a spelling refers to, or creates a new company for it.
+     * Scores the spelling against every known company and decides by the best score:
+     * at or above ACCEPT it is the same company, between GRAY and ACCEPT the Adjudicator decides,
+     * otherwise it is a new company.
+     */
+    private CompanyDecision decideCompany(MentionRow mention, boolean isDomain, boolean truncated, Map<Long, String> knownCompanies) throws Exception {
+        
+        List<CompanyCandidate> candidates = new ArrayList<>();
+        for (Map.Entry<Long, String> known : knownCompanies.entrySet()) {
+            Match match = isDomain ? NameMatcher.matchDomain(mention.surface, known.getValue())
+                    : NameMatcher.matchCompany(mention.surface, known.getValue(), truncated);
             if (match != null) {
-                scored.add(new Object[] {match.score, match.method, e.getKey()});
+                candidates.add(new CompanyCandidate(known.getKey(), match.score, match.methodName()));
             }
         }
-        // best score first; on a tie prefer the anchors (folder customers, owner)
-        Collections.sort(scored, new Comparator<Object[]>() {
-            public int compare(Object[] a, Object[] b) {
-                int c = Double.compare((Double) b[0], (Double) a[0]);
-                if (c != 0) {
-                    return c;
-                }
-                return Boolean.compare(anchors.contains((Long) b[2]), anchors.contains((Long) a[2]));
+
+        // best score first; on a tie prefer an anchor (the owner or a customer folder)
+        candidates.sort((a, b) -> {
+            int byScore = Double.compare(b.score, a.score);
+            if (byScore != 0) {
+                return byScore;
             }
+            return Boolean.compare(anchorCompanyIds.contains(b.companyId), anchorCompanyIds.contains(a.companyId));
         });
-        if (!scored.isEmpty() && (Double) scored.get(0)[0] >= ACCEPT) {
-            Object[] best = scored.get(0);
-            if (scored.size() > 1 && (Double) best[0] - (Double) scored.get(1)[0] < AMBIGUOUS_MARGIN && !"normalized".equals(best[1])) {
-                issue("ambiguous_match", "warn", "company '" + m.surface + "' matches both '" + entities.get(best[2])
-                        + "' and '" + entities.get(scored.get(1)[2]) + "'", m.fileId, null);
+        CompanyCandidate best = candidates.isEmpty() ? null : candidates.get(0);
+
+        // Good enough: it is this company. Warn when a second company scored almost the same.
+        if (best != null && best.score >= ACCEPT) {
+            CompanyCandidate runnerUp = candidates.size() > 1 ? candidates.get(1) : null;
+            if (runnerUp != null && best.score - runnerUp.score < AMBIGUOUS_MARGIN && !Match.Method.NORMALIZED.value().equals(best.method)) {
+                issue("ambiguous_match", "warn", "company '" + mention.surface + "' matches both '"
+                        + knownCompanies.get(best.companyId) + "' and '" + knownCompanies.get(runnerUp.companyId) + "'",
+                        mention.fileId, null);
             }
-            return new Object[] {best[2], best[1], best[0]};
+            return new CompanyDecision(best.companyId, best.method, best.score);
         }
-        if (!scored.isEmpty() && (Double) scored.get(0)[0] >= GRAY) {
-            Object[] best = scored.get(0);
-            String candidate = entities.get(best[2]);
-            Adjudicator.Verdict v = adjudicator.sameEntity(EntityType.COMPANY, m.surface, candidate,
-                    "seen as " + m.role.value() + " in file " + files.get(m.fileId).path);
-            if (v.same) {
-                return new Object[] {best[2], "adjudicated:" + best[1], Math.min((Double) best[0], v.confidence)};
+
+        // Borderline: ask the Adjudicator (by default it says no; with ERKG_ADJUDICATOR=claude it asks Claude).
+        if (best != null && best.score >= GRAY) {
+            String candidateName = knownCompanies.get(best.companyId);
+            Adjudicator.Verdict verdict = adjudicator.sameEntity(EntityType.COMPANY, mention.surface, candidateName,
+                    "seen as " + mention.role.value() + " in file " + filesById.get(mention.fileId).path);
+            if (verdict.same) {
+                return new CompanyDecision(best.companyId, "adjudicated:" + best.method, Math.min(best.score, verdict.confidence));
             }
             issue("possible_alias", "info", String.format("'%s' may be '%s' (%s, %.2f); kept separate: %s",
-                    m.surface, candidate, best[1], (Double) best[0], v.reason), m.fileId, (Long) best[2]);
+                    mention.surface, candidateName, best.method, best.score, verdict.reason), mention.fileId, best.companyId);
         }
-        // New organisation (supplier, certification body, unknown customer, ...)
-        String name = isDomain ? m.surface.toLowerCase() : m.surface;
+
+        // No match: a new organisation (supplier, certification body, unknown customer, ...).
+        // It is added to knownCompanies, so later mentions can match it.
+        String name = isDomain ? mention.surface.toLowerCase() : mention.surface;
         String key = isDomain ? "domain:" + name : NameMatcher.companyKey(name);
-        long id = entity(EntityType.COMPANY, key, name, isDomain ? attrs("domain", name) : null);
-        entities.put(id, name);
-        return new Object[] {id, "new", 1.0};
+        long companyId = findOrCreateEntity(EntityType.COMPANY, key, name, isDomain ? attributes("domain", name) : null);
+        knownCompanies.put(companyId, name);
+        return new CompanyDecision(companyId, "new", 1.0);
     }
 
     // ================================================================ projects
 
-    private void projects() throws Exception {
-        Map<String, List<Long>> byTitle = new LinkedHashMap<String, List<Long>>();   // normalised title -> projects
-        Map<Long, Long> companyOfProject = new HashMap<Long, Long>();
+    /**
+     * Gives every project mention its project. A JOB code (JOB-2023-0003) identifies a project exactly;
+     * a title alone ("Job: Shrink Wrap Retrofit") is matched to a folder project using the customer as context.
+     */
+    private void resolveProjects() throws Exception {
+        // title key -> projects that have a folder with that title (one title can exist for two customers)
+        Map<String, List<Long>> folderProjectsByTitle = new LinkedHashMap<>();
+        // project id -> its customer, from the folder
+        Map<Long, Long> customerOfProject = new HashMap<>();
 
-        // 1. explicit job ids (folders first so their titles and customers win)
-        List<MentionRow> withId = new ArrayList<MentionRow>();
-        for (MentionRow m : filterByType(EntityType.PROJECT)) {
-            if (m.attrs.get("job_id") != null) {
-                withId.add(m);
+        // Step 1: mentions that carry a JOB code. One project per code.
+        // Folder mentions first, so the folder's title and customer are the ones kept.
+        List<MentionRow> mentionsWithJobId = new ArrayList<>();
+        for (MentionRow mention : mentionsOfType(EntityType.PROJECT)) {
+            if (mention.attrs.get("job_id") != null) {
+                mentionsWithJobId.add(mention);
             }
         }
-        Collections.sort(withId, new Comparator<MentionRow>() {
-            public int compare(MentionRow a, MentionRow b) {
-                return Boolean.compare(a.role != MentionRole.FOLDER, b.role != MentionRole.FOLDER);
-            }
-        });
-        for (MentionRow m : withId) {
-            String jobId = m.attrString("job_id");
-            Long company = entityOfMention(m.attrId("company_mention"));
-            String title = m.surface.equals(jobId) ? null : m.surface;
-            Map<String, Object> a = attrs("job_id", jobId, "title", title, "company_id", company,
-                    "source", m.role.value(),
-                    "status", m.attrs.get("status"), "value", m.attrs.get("value"));
-            EntityRow existing = entitiesDao.findByTypeAndKey(conn, EntityType.PROJECT, jobId);
-            if (existing != null) {   // never overwrite what the folder said, except live status/value
-                Map<String, Object> old = existing.attrs;
-                Map<String, Object> keep = new LinkedHashMap<String, Object>();
-                for (Map.Entry<String, Object> e : a.entrySet()) {
-                    if (!old.containsKey(e.getKey()) || e.getKey().equals("status") || e.getKey().equals("value")) {
-                        keep.put(e.getKey(), e.getValue());
+        mentionsWithJobId.sort(Comparator.comparing(mention -> mention.role != MentionRole.FOLDER));
+
+        for (MentionRow mention : mentionsWithJobId) {
+            String jobId = mention.attrString("job_id");
+            Long customerId = entityIdOfMention(mention.attrId("company_mention"));
+            String title = mention.surface.equals(jobId) ? null : mention.surface;
+            Map<String, Object> projectAttributes = attributes("job_id", jobId, "title", title, "company_id", customerId,
+                    "source", mention.role.value(),
+                    "status", mention.attrs.get("status"), "value", mention.attrs.get("value"));
+
+            // The project already exists (from its folder): keep what the folder said and only add
+            // attributes it does not have yet, except status and value, which later sources may update.
+            EntityRow existingProject = entitiesDao.findByTypeAndKey(conn, EntityType.PROJECT, jobId);
+            if (existingProject != null) {
+                Map<String, Object> newAttributes = new LinkedHashMap<>();
+                for (Map.Entry<String, Object> attribute : projectAttributes.entrySet()) {
+                    String key = attribute.getKey();
+                    if (!existingProject.attrs.containsKey(key) || key.equals("status") || key.equals("value")) {
+                        newAttributes.put(key, attribute.getValue());
                     }
                 }
-                a = keep;
+                projectAttributes = newAttributes;
             }
-            long id = entity(EntityType.PROJECT, jobId, title != null ? jobId + " " + title : jobId, a);
-            if (m.role == MentionRole.FOLDER && title != null) {
-                String tk = titleKey(title);
-                if (!byTitle.containsKey(tk)) {
-                    byTitle.put(tk, new ArrayList<Long>());
+            long projectId = findOrCreateEntity(EntityType.PROJECT, jobId, title != null ? jobId + " " + title : jobId,
+                    projectAttributes);
+
+            // remember folder projects by title, for step 2
+            if (mention.role == MentionRole.FOLDER && title != null) {
+                String titleKey = titleKey(title);
+                if (!folderProjectsByTitle.containsKey(titleKey)) {
+                    folderProjectsByTitle.put(titleKey, new ArrayList<>());
                 }
-                if (!byTitle.get(tk).contains(id)) {
-                    byTitle.get(tk).add(id);
+                if (!folderProjectsByTitle.get(titleKey).contains(projectId)) {
+                    folderProjectsByTitle.get(titleKey).add(projectId);
                 }
-                companyOfProject.put(id, company);
+                customerOfProject.put(projectId, customerId);
             }
-            assign(m, id, "job_id", m.role == MentionRole.FOLDER ? 1.0 : 0.95);
+            assignEntity(mention, projectId, "job_id", mention.role == MentionRole.FOLDER ? 1.0 : 0.95);
         }
-        for (List<Long> ids : byTitle.values()) {
-            Collections.sort(ids);
+        for (List<Long> projectIds : folderProjectsByTitle.values()) {
+            projectIds.sort(null);
         }
 
-        // 2. title-only mentions ('Job: Palletiser Line Upgrade') need the customer as context
-        Map<Long, Long> folderProject = new HashMap<Long, Long>();
-        for (MentionRow m : filterByType(EntityType.PROJECT)) {
-            if (m.role == MentionRole.FOLDER) {
-                folderProject.put(m.fileId, m.entityId);
+        // Step 2: mentions with only a title. Several customers can have a project with the same title,
+        // so the customer the document names, or the folder the file sits in, picks the right one.
+        Map<Long, Long> folderProjectOfFile = new HashMap<>();   // file id -> project of its JOB folder
+        for (MentionRow mention : mentionsOfType(EntityType.PROJECT)) {
+            if (mention.role == MentionRole.FOLDER) {
+                folderProjectOfFile.put(mention.fileId, mention.entityId);
             }
         }
-        for (MentionRow m : filterByType(EntityType.PROJECT)) {
-            if (m.entityId != null) {
-                continue;
+        for (MentionRow mention : mentionsOfType(EntityType.PROJECT)) {
+            if (mention.entityId != null) {
+                continue;   // already resolved by its JOB code in step 1
             }
-            String tk = titleKey(m.surface);
-            List<Long> cands = byTitle.containsKey(tk) ? byTitle.get(tk) : fuzzyTitles(tk, byTitle);
-            Long company = entityOfMention(m.attrId("company_mention"));
-            Long here = folderProject.get(m.fileId);
+            String titleKey = titleKey(mention.surface);
+            List<Long> candidates = folderProjectsByTitle.containsKey(titleKey) ? folderProjectsByTitle.get(titleKey)
+                    : projectsWithSimilarTitle(titleKey, folderProjectsByTitle);
+            Long customerId = entityIdOfMention(mention.attrId("company_mention"));
+            Long projectOfFolder = folderProjectOfFile.get(mention.fileId);
+
             Long chosen = null;
             String method = null;
-            if (company != null) {
-                List<Long> sameCompany = new ArrayList<Long>();
-                for (Long c : cands) {
-                    if (company.equals(companyOfProject.get(c))) {
-                        sameCompany.add(c);
+            // a) the one candidate of the customer the document names (or, if that customer has
+            //    several, the one whose folder holds this file)
+            if (customerId != null) {
+                List<Long> ofThisCustomer = new ArrayList<>();
+                for (Long candidate : candidates) {
+                    if (customerId.equals(customerOfProject.get(candidate))) {
+                        ofThisCustomer.add(candidate);
                     }
                 }
-                if (sameCompany.size() == 1) {
-                    chosen = sameCompany.get(0);
+                if (ofThisCustomer.size() == 1) {
+                    chosen = ofThisCustomer.get(0);
                     method = "title+company";
-                } else if (sameCompany.size() > 1 && sameCompany.contains(here)) {
-                    chosen = here;
+                } else if (ofThisCustomer.size() > 1 && ofThisCustomer.contains(projectOfFolder)) {
+                    chosen = projectOfFolder;
                     method = "title+company+folder";
                 }
             }
-            if (chosen == null && here != null && cands.contains(here)) {
-                chosen = here;
+            // b) the candidate whose folder holds this file
+            if (chosen == null && projectOfFolder != null && candidates.contains(projectOfFolder)) {
+                chosen = projectOfFolder;
                 method = "title+folder";
             }
-            if (chosen == null && cands.size() == 1) {
-                chosen = cands.get(0);
+            // c) the only project with this title
+            if (chosen == null && candidates.size() == 1) {
+                chosen = candidates.get(0);
                 method = "unique_title";
             }
+
             if (chosen == null) {
-                assign(m, null, "unresolved", 0);
-                if (!cands.isEmpty()) {
-                    issue("ambiguous_project", "info", "job title '" + m.surface + "' matches " + cands.size()
-                            + " projects; no company context", m.fileId, null);
+                assignEntity(mention, null, "unresolved", 0);
+                if (!candidates.isEmpty()) {
+                    issue("ambiguous_project", "info", "job title '" + mention.surface + "' matches " + candidates.size()
+                            + " projects; no company context", mention.fileId, null);
                 }
                 continue;
             }
-            assign(m, chosen, method, method.contains("company") ? 0.9 : 0.75);
-            if (here != null && !chosen.equals(here)) {
-                issue("misfiled", "warn", "document is filed under " + files.get(m.fileId).folderJob
-                        + " but refers to '" + m.surface + "' of another project", m.fileId, chosen);
+            assignEntity(mention, chosen, method, method.contains("company") ? 0.9 : 0.75);
+
+            // the document talks about another project than the folder it is filed in
+            if (projectOfFolder != null && !chosen.equals(projectOfFolder)) {
+                issue("misfiled", "warn", "document is filed under " + filesById.get(mention.fileId).folderJob
+                        + " but refers to '" + mention.surface + "' of another project", mention.fileId, chosen);
             }
         }
     }
 
+    /** "Shrink Wrap Retrofit" -> "shrink wrap retrofit": lower case, punctuation as single spaces. */
     private static String titleKey(String title) {
         return title.toLowerCase().replaceAll("[^a-z0-9]+", " ").trim();
     }
 
-    /** Candidates of the most similar known title, when it is at least 90% similar. */
-    private static List<Long> fuzzyTitles(String tk, Map<String, List<Long>> byTitle) {
-        String bestKey = null;
-        double bestScore = 0;
-        for (String k : byTitle.keySet()) {
-            double r = Text.ratio(tk, k);
-            if (r >= 90 && (r > bestScore || (r == bestScore && k.compareTo(bestKey) > 0))) {
-                bestScore = r;
-                bestKey = k;
+    /** Projects of the most similar known title, when it is at least 90% similar (typos in "Job:" fields). */
+    private static List<Long> projectsWithSimilarTitle(String titleKey, Map<String, List<Long>> folderProjectsByTitle) {
+        String bestTitle = null;
+        double bestSimilarity = 0;
+        for (String knownTitle : folderProjectsByTitle.keySet()) {
+            double similarity = Text.ratio(titleKey, knownTitle);
+            if (similarity >= 90 && (similarity > bestSimilarity
+                    || (similarity == bestSimilarity && knownTitle.compareTo(bestTitle) > 0))) {
+                bestSimilarity = similarity;
+                bestTitle = knownTitle;
             }
         }
-        return bestKey == null ? new ArrayList<Long>() : byTitle.get(bestKey);
+        return bestTitle == null ? new ArrayList<>() : folderProjectsByTitle.get(bestTitle);
     }
 
     // ================================================================ people
 
-    private void people() throws Exception {
-        Map<Long, Long> folderCompany = new HashMap<Long, Long>();
-        for (MentionRow m : filterByType(EntityType.COMPANY)) {
-            if (m.role == MentionRole.FOLDER) {
-                folderCompany.put(m.fileId, m.entityId);
-            }
-        }
-        Map<String, Long> clusters = new LinkedHashMap<String, Long>();   // "name key|org" -> person
-        Map<String, Long> byEmail = new HashMap<String, Long>();
-        List<MentionRow> persons = filterByType(EntityType.PERSON);
+    /**
+     * Gives every person mention its person. A person is identified by name + organisation
+     * ("Thomas Bianchi" at Acme), or by e-mail address. Names seen without an organisation
+     * (meeting attendees) are matched to a known person when that is unambiguous.
+     */
+    private void resolvePeople() throws Exception {
+        Map<Long, Long> customerOfFolder = customerOfFolderByFile();
+        // "name key|organisation id" -> person
+        Map<String, Long> personByNameAndOrg = new LinkedHashMap<>();
+        Map<String, Long> personByEmail = new HashMap<>();
+        List<MentionRow> personMentions = mentionsOfType(EntityType.PERSON);
 
-        // 1. people with a known organisation (email domain, bill-to, vCard, staff roles); e-mails first
-        List<MentionRow> ordered = new ArrayList<MentionRow>(persons);
-        Collections.sort(ordered, new Comparator<MentionRow>() {
-            public int compare(MentionRow a, MentionRow b) {
-                return Boolean.compare(a.attrs.get("email") == null, b.attrs.get("email") == null);
+        // Step 1: people whose organisation is known (e-mail domain, bill-to, vCard, the owner's staff).
+        // Mentions with an e-mail address go first, so the same address always finds the same person.
+        List<MentionRow> emailFirst = new ArrayList<>(personMentions);
+        emailFirst.sort(Comparator.comparing(mention -> mention.attrs.get("email") == null));
+
+        for (MentionRow mention : emailFirst) {
+            Long orgId = entityIdOfMention(mention.attrId("org_mention"));
+            if (orgId == null) {
+                continue;   // handled in step 2
             }
-        });
-        for (MentionRow m : ordered) {
-            Long org = entityOfMention(m.attrId("org_mention"));
-            if (org == null) {
-                continue;
+            String nameKey = NameMatcher.personKey(mention.surface);
+            String email = mention.attrString("email");
+
+            // same e-mail address, else same name at the same organisation
+            Long personId = email != null ? personByEmail.get(email) : null;
+            if (personId == null) {
+                personId = personByNameAndOrg.get(nameKey + "|" + orgId);
             }
-            String nk = NameMatcher.personKey(m.surface);
-            String email = m.attrString("email");
-            Long id = email != null ? byEmail.get(email) : null;
-            if (id == null) {
-                id = clusters.get(nk + "|" + org);
-            }
-            String method = email != null && byEmail.containsKey(email) ? "email" : "name+organisation";
-            if (id == null) {
-                id = entity(EntityType.PERSON, nk + "|" + org, m.surface, attrs("company_id", org));
+            String method = email != null && personByEmail.containsKey(email) ? "email" : "name+organisation";
+            if (personId == null) {
+                personId = findOrCreateEntity(EntityType.PERSON, nameKey + "|" + orgId, mention.surface,
+                        attributes("company_id", orgId));
                 method = "new";
             }
-            clusters.put(nk + "|" + org, id);
+            personByNameAndOrg.put(nameKey + "|" + orgId, personId);
+
+            // collect everything known about the person
             if (email != null) {
-                byEmail.put(email, id);
-                addToList(id, "emails", email);
+                personByEmail.put(email, personId);
+                addToListAttribute(personId, "emails", email);
             }
-            if (m.attrs.get("job_title") != null) {
-                addToList(id, "job_titles", m.attrs.get("job_title"));
+            if (mention.attrs.get("job_title") != null) {
+                addToListAttribute(personId, "job_titles", mention.attrs.get("job_title"));
             }
-            if (m.attrs.get("phone") != null) {
-                addToList(id, "phones", m.attrs.get("phone"));
+            if (mention.attrs.get("phone") != null) {
+                addToListAttribute(personId, "phones", mention.attrs.get("phone"));
             }
-            assign(m, id, method, method.equals("email") || method.equals("new") ? 1.0 : 0.95);
+            assignEntity(mention, personId, method, method.equals("email") || method.equals("new") ? 1.0 : 0.95);
         }
 
-        // name key -> {org, person} pairs
-        Map<String, Set<List<Long>>> byName = new HashMap<String, Set<List<Long>>>();
-        for (Map.Entry<String, Long> e : clusters.entrySet()) {
-            int bar = e.getKey().lastIndexOf('|');
-            addCandidate(byName, e.getKey().substring(0, bar), Long.valueOf(e.getKey().substring(bar + 1)), e.getValue());
+        // name key -> every known person with that name (one per organisation)
+        Map<String, Set<KnownPerson>> peopleByName = new HashMap<>();
+        for (Map.Entry<String, Long> entry : personByNameAndOrg.entrySet()) {
+            int bar = entry.getKey().lastIndexOf('|');
+            String nameKey = entry.getKey().substring(0, bar);
+            Long orgId = Long.valueOf(entry.getKey().substring(bar + 1));
+            addKnownPerson(peopleByName, nameKey, orgId, entry.getValue());
         }
-        // 2. people seen without an organisation (meeting attendees, un-attributed signatures)
-        for (MentionRow m : persons) {
-            if (m.entityId != null) {
-                continue;
+
+        // Step 2: people seen without an organisation (meeting attendees, signatures with no company line).
+        for (MentionRow mention : personMentions) {
+            if (mention.entityId != null) {
+                continue;   // resolved in step 1
             }
-            String nk = NameMatcher.personKey(m.surface);
-            Set<List<Long>> cands = byName.containsKey(nk) ? byName.get(nk) : new LinkedHashSet<List<Long>>();
-            String[] initial = NameMatcher.personInitialForm(m.surface);
-            if (cands.isEmpty() && initial != null) {   // 'R. Bianchi'
-                for (Map.Entry<String, Set<List<Long>>> e : byName.entrySet()) {
-                    String[] words = e.getKey().split(" ");
-                    if (words[words.length - 1].equals(initial[1]) && e.getKey().startsWith(initial[0])) {
-                        cands.addAll(e.getValue());
+            String nameKey = NameMatcher.personKey(mention.surface);
+            Set<KnownPerson> candidates = peopleByName.containsKey(nameKey) ? peopleByName.get(nameKey) : new LinkedHashSet<>();
+
+            // "R. Bianchi": compare the initial and surname with every known full name
+            String[] initialAndSurname = NameMatcher.personInitialForm(mention.surface);
+            if (candidates.isEmpty() && initialAndSurname != null) {
+                for (Map.Entry<String, Set<KnownPerson>> known : peopleByName.entrySet()) {
+                    String[] words = known.getKey().split(" ");
+                    if (words[words.length - 1].equals(initialAndSurname[1]) && known.getKey().startsWith(initialAndSurname[0])) {
+                        candidates.addAll(known.getValue());
                     }
                 }
             }
-            Long context = folderCompany.get(m.fileId);
-            List<List<Long>> pick = new ArrayList<List<Long>>();
-            for (List<Long> c : cands) {
-                if (c.get(0) != null && c.get(0).equals(context)) {
-                    pick.add(c);
+
+            // among several candidates, prefer the one at the customer whose folder holds the file,
+            // else the owner's employee
+            Long folderCustomer = customerOfFolder.get(mention.fileId);
+            List<KnownPerson> preferred = new ArrayList<>();
+            for (KnownPerson candidate : candidates) {
+                if (candidate.orgId != null && candidate.orgId.equals(folderCustomer)) {
+                    preferred.add(candidate);
                 }
             }
-            if (pick.isEmpty()) {
-                for (List<Long> c : cands) {
-                    if (c.get(0) != null && c.get(0) == owner) {
-                        pick.add(c);
+            if (preferred.isEmpty()) {
+                for (KnownPerson candidate : candidates) {
+                    if (candidate.orgId != null && candidate.orgId == ownerCompanyId) {
+                        preferred.add(candidate);
                     }
                 }
             }
-            long id;
+
+            long personId;
             String method;
             double confidence;
-            if (cands.size() == 1) {
-                id = cands.iterator().next().get(1);
+            if (candidates.size() == 1) {
+                personId = candidates.iterator().next().personId;
                 method = "unique_name";
                 confidence = 0.8;
-            } else if (pick.size() == 1) {
-                id = pick.get(0).get(1);
+            } else if (preferred.size() == 1) {
+                personId = preferred.get(0).personId;
                 method = "name+context";
                 confidence = 0.7;
             } else {
-                if (cands.size() > 1) {
-                    issue("ambiguous_person", "info", "'" + m.surface + "' matches " + cands.size()
-                            + " people at different organisations", m.fileId, null);
+                // unknown, or too many people with this name: a separate person with no organisation
+                if (candidates.size() > 1) {
+                    issue("ambiguous_person", "info", "'" + mention.surface + "' matches " + candidates.size()
+                            + " people at different organisations", mention.fileId, null);
                 }
-                id = entity(EntityType.PERSON, nk + "|?", m.surface, new HashMap<String, Object>());
+                personId = findOrCreateEntity(EntityType.PERSON, nameKey + "|?", mention.surface, new HashMap<>());
                 method = "new_unattributed";
                 confidence = 1.0;
-                addCandidate(byName, nk, null, id);
+                addKnownPerson(peopleByName, nameKey, null, personId);
             }
-            assign(m, id, method, confidence);
+            assignEntity(mention, personId, method, confidence);
         }
     }
 
-    private static void addCandidate(Map<String, Set<List<Long>>> byName, String nameKey, Long org, long person) {
-        if (!byName.containsKey(nameKey)) {
-            byName.put(nameKey, new LinkedHashSet<List<Long>>());
+    private static void addKnownPerson(Map<String, Set<KnownPerson>> peopleByName, String nameKey, Long orgId, long personId) {
+        if (!peopleByName.containsKey(nameKey)) {
+            peopleByName.put(nameKey, new LinkedHashSet<>());
         }
-        byName.get(nameKey).add(java.util.Arrays.asList(org, person));
-    }
-
-    @SuppressWarnings("unchecked")
-    private void addToList(long id, String key, Object value) throws Exception {
-        Map<String, Object> a = entityAttrs(id);
-        List<Object> list = (List<Object>) a.get(key);
-        if (list == null) {
-            list = new ArrayList<Object>();
-            a.put(key, list);
-        }
-        if (!list.contains(value)) {
-            list.add(value);
-            saveEntityAttrs(id, a);
-        }
+        peopleByName.get(nameKey).add(new KnownPerson(orgId, personId));
     }
 
     // ================================================================ documents
 
     /**
-     * A document number identifies a document within a counterparty: the dataset reuses some
-     * numbers (DWG-9296 is two different drawings for two customers), so copies of one number
-     * that disagree on customer/product are split apart.
+     * Gives every document mention its document. The document number is the identity (INV-8034),
+     * but the dataset reuses some numbers for different documents (DWG-9296 is two different drawings
+     * for two customers), so a number used for several customers is split into one document per customer.
+     * Documents without a number are identified by their file.
      */
-    private void documents() throws Exception {
-        Map<Long, Long> party = new HashMap<Long, Long>();   // self-mention -> counterparty entity
-        for (FactRow f : factsDao.findWithRelations(conn, COUNTERPARTY_RELATIONS)) {
-            boolean partyTo = f.rel == RelationType.PARTY_TO;
-            long docMention = partyTo ? f.dst : f.src;
-            Long other = entityOfMention(partyTo ? f.src : f.dst);
-            if (other != null && other != owner && !party.containsKey(docMention)) {
-                party.put(docMention, other);
+    private void resolveDocuments() throws Exception {
+        // a file's own document mention -> the company (or product) it is about, from its facts
+        Map<Long, Long> counterpartyOfDocument = new HashMap<>();
+        for (FactRow fact : factsDao.findWithRelations(conn, COUNTERPARTY_RELATIONS)) {
+            boolean partyTo = fact.rel == RelationType.PARTY_TO;   // company PARTY_TO contract: reversed direction
+            long documentMentionId = partyTo ? fact.dst : fact.src;
+            Long counterpartyId = entityIdOfMention(partyTo ? fact.src : fact.dst);
+            // the owner is on everything, so it never tells two documents apart
+            if (counterpartyId != null && counterpartyId != ownerCompanyId && !counterpartyOfDocument.containsKey(documentMentionId)) {
+                counterpartyOfDocument.put(documentMentionId, counterpartyId);
             }
         }
-        Map<Long, Long> folderCompany = new HashMap<Long, Long>();
-        for (MentionRow m : filterByType(EntityType.COMPANY)) {
-            if (m.role == MentionRole.FOLDER) {
-                folderCompany.put(m.fileId, m.entityId);
+        Map<Long, Long> customerOfFolder = customerOfFolderByFile();
+
+        // document key -> every counterparty seen for it
+        List<MentionRow> documentMentions = mentionsOfType(EntityType.DOCUMENT);
+        Map<String, Set<Long>> counterpartiesOfKey = new LinkedHashMap<>();
+        for (MentionRow mention : documentMentions) {
+            if (mention.role == MentionRole.SELF) {
+                String key = documentKey(mention);
+                if (!counterpartiesOfKey.containsKey(key)) {
+                    counterpartiesOfKey.put(key, new LinkedHashSet<>());
+                }
+                if (counterpartyOfDocument.get(mention.id) != null) {
+                    counterpartiesOfKey.get(key).add(counterpartyOfDocument.get(mention.id));
+                }
             }
         }
 
-        List<MentionRow> docs = filterByType(EntityType.DOCUMENT);
-        Map<String, Set<Long>> partiesOfKey = new LinkedHashMap<String, Set<Long>>();
-        for (MentionRow m : docs) {
-            if (m.role == MentionRole.SELF) {
-                String key = docKey(m);
-                if (!partiesOfKey.containsKey(key)) {
-                    partiesOfKey.put(key, new LinkedHashSet<Long>());
+        // a document number with more than one counterparty is really several documents
+        Map<String, Set<Long>> reusedNumbers = new HashMap<>();
+        for (Map.Entry<String, Set<Long>> entry : counterpartiesOfKey.entrySet()) {
+            if (entry.getValue().size() > 1 && entry.getKey().matches(DOCUMENT_NUMBER)) {
+                reusedNumbers.put(entry.getKey(), entry.getValue());
+                TreeSet<String> companyNames = new TreeSet<>();
+                for (Long counterpartyId : entry.getValue()) {
+                    companyNames.add(entitiesDao.findById(conn, counterpartyId).name);
                 }
-                if (party.get(m.id) != null) {
-                    partiesOfKey.get(key).add(party.get(m.id));
-                }
-            }
-        }
-        Map<String, Set<Long>> splitKeys = new HashMap<String, Set<Long>>();
-        for (Map.Entry<String, Set<Long>> e : partiesOfKey.entrySet()) {
-            if (e.getValue().size() > 1 && e.getKey().matches("^[A-Z]+-\\d.*")) {
-                splitKeys.put(e.getKey(), e.getValue());
-                TreeSet<String> names = new TreeSet<String>();
-                for (Long p : e.getValue()) {
-                    names.add(entitiesDao.findById(conn, p).name);
-                }
-                issue("number_collision", "warn", e.getKey() + " is used by " + e.getValue().size()
-                        + " different documents (" + NameMatcher.join(new ArrayList<String>(names), ", ")
+                issue("number_collision", "warn", entry.getKey() + " is used by " + entry.getValue().size()
+                        + " different documents (" + NameMatcher.join(new ArrayList<>(companyNames), ", ")
                         + "); kept as separate documents", null, null);
             }
         }
 
-        // file-backed first, so referenced-only documents attach to them
-        List<MentionRow> ordered = new ArrayList<MentionRow>(docs);
-        Collections.sort(ordered, new Comparator<MentionRow>() {
-            public int compare(MentionRow a, MentionRow b) {
-                return Boolean.compare(a.role != MentionRole.SELF, b.role != MentionRole.SELF);
-            }
-        });
-        for (MentionRow m : ordered) {
-            String key = docKey(m);
-            Long counterparty = null;
-            if (splitKeys.containsKey(key)) {
-                counterparty = m.role == MentionRole.SELF ? party.get(m.id) : folderCompany.get(m.fileId);
-                if (counterparty == null || !splitKeys.get(key).contains(counterparty)) {
-                    assign(m, null, "ambiguous_number", 0);
+        // A file's own document first, then references to it from other files, so a reference
+        // ("Quote Ref: QUO-5238") attaches to the document created from the file.
+        List<MentionRow> fileDocumentsFirst = new ArrayList<>(documentMentions);
+        fileDocumentsFirst.sort(Comparator.comparing(mention -> mention.role != MentionRole.SELF));
+
+        for (MentionRow mention : fileDocumentsFirst) {
+            String key = documentKey(mention);
+            Long counterpartyId = null;
+            if (reusedNumbers.containsKey(key)) {
+                // a reused number: add the counterparty to the key (a reference uses its file's folder customer)
+                counterpartyId = mention.role == MentionRole.SELF ? counterpartyOfDocument.get(mention.id)
+                        : customerOfFolder.get(mention.fileId);
+                if (counterpartyId == null || !reusedNumbers.get(key).contains(counterpartyId)) {
+                    assignEntity(mention, null, "ambiguous_number", 0);
                     continue;
                 }
-                key = key + "@" + counterparty;
+                key = key + "@" + counterpartyId;
             }
-            long id = entity(EntityType.DOCUMENT, key, m.surface, null);
-            if (m.role == MentionRole.SELF) {
-                mergeDocAttrs(id, m);
+            long documentId = findOrCreateEntity(EntityType.DOCUMENT, key, mention.surface, null);
+            if (mention.role == MentionRole.SELF) {
+                mergeDocumentAttributes(documentId, mention);
             }
-            String method = key.matches("^[A-Z]+-\\d.*") ? "doc_number" : "file_identity";
-            assign(m, id, method + (counterparty != null ? "+counterparty" : ""), m.role == MentionRole.SELF ? 1.0 : 0.9);
+            String method = key.matches(DOCUMENT_NUMBER) ? "doc_number" : "file_identity";
+            assignEntity(mention, documentId, method + (counterpartyId != null ? "+counterparty" : ""),
+                    mention.role == MentionRole.SELF ? 1.0 : 0.9);
         }
     }
 
-    private static String docKey(MentionRow m) {
-        String k = m.attrString("key");
-        return k != null ? k : m.surface;
+    /** The document's identity: its number (INV-8034), or "file:&lt;sha&gt;" / "email:..." when it has none. */
+    private static String documentKey(MentionRow mention) {
+        String key = mention.attrString("key");
+        return key != null ? key : mention.surface;
     }
 
+    /**
+     * Adds one copy of a document to its entity: the file id, the version name, and the attributes
+     * the entity does not have yet. When copies disagree on total, date or job title, both values
+     * are kept under "conflicts" (reported later as version_conflict).
+     */
     @SuppressWarnings("unchecked")
-    private void mergeDocAttrs(long id, MentionRow m) throws Exception {
-        Map<String, Object> a = entityAttrs(id);
-        List<Object> fileIds = (List<Object>) a.get("files");
+    private void mergeDocumentAttributes(long documentId, MentionRow mention) throws Exception {
+        Map<String, Object> attributes = entityAttributes(documentId);
+
+        List<Object> fileIds = (List<Object>) attributes.get("files");
         if (fileIds == null) {
-            fileIds = new ArrayList<Object>();
-            a.put("files", fileIds);
+            fileIds = new ArrayList<>();
+            attributes.put("files", fileIds);
         }
-        if (!containsNumber(fileIds, m.fileId)) {
-            fileIds.add(m.fileId);
+        if (!containsNumber(fileIds, mention.fileId)) {
+            fileIds.add(mention.fileId);
         }
-        for (Map.Entry<String, Object> e : m.attrs.entrySet()) {
-            String k = e.getKey();
-            Object v = e.getValue();
-            if (k.equals("key") || k.equals("version") || v == null) {
+
+        for (Map.Entry<String, Object> attribute : mention.attrs.entrySet()) {
+            String key = attribute.getKey();
+            Object value = attribute.getValue();
+            if (key.equals("key") || key.equals("version") || value == null) {
                 continue;
             }
-            boolean trackConflicts = k.equals("total") || k.equals("date") || k.equals("job_title");
-            if (a.containsKey(k) && !a.get(k).equals(v) && trackConflicts) {
-                Map<String, Object> conflicts = (Map<String, Object>) a.get("conflicts");
+            boolean trackConflicts = key.equals("total") || key.equals("date") || key.equals("job_title");
+            if (attributes.containsKey(key) && !attributes.get(key).equals(value) && trackConflicts) {
+                Map<String, Object> conflicts = (Map<String, Object>) attributes.get("conflicts");
                 if (conflicts == null) {
-                    conflicts = new LinkedHashMap<String, Object>();
-                    a.put("conflicts", conflicts);
+                    conflicts = new LinkedHashMap<>();
+                    attributes.put("conflicts", conflicts);
                 }
-                List<Object> values = (List<Object>) conflicts.get(k);
+                List<Object> values = (List<Object>) conflicts.get(key);
                 if (values == null) {
-                    values = new ArrayList<Object>();
-                    values.add(a.get(k));
-                    conflicts.put(k, values);
+                    values = new ArrayList<>();
+                    values.add(attributes.get(key));
+                    conflicts.put(key, values);
                 }
-                if (!values.contains(v)) {
-                    values.add(v);
+                if (!values.contains(value)) {
+                    values.add(value);
                 }
-            } else if (!a.containsKey(k) || (k.equals("doc_type") && "other".equals(a.get(k)))) {
-                a.put(k, v);
+            } else if (!attributes.containsKey(key) || (key.equals("doc_type") && "other".equals(attributes.get(key)))) {
+                // first value wins, except that a real document type replaces "other"
+                attributes.put(key, value);
             }
         }
-        if (m.attrs.get("version") != null) {
-            List<Object> versions = (List<Object>) a.get("versions");
+
+        if (mention.attrs.get("version") != null) {
+            List<Object> versions = (List<Object>) attributes.get("versions");
             if (versions == null) {
-                versions = new ArrayList<Object>();
-                a.put("versions", versions);
+                versions = new ArrayList<>();
+                attributes.put("versions", versions);
             }
-            versions.add(m.attrs.get("version"));
+            versions.add(mention.attrs.get("version"));
         }
-        saveEntityAttrs(id, a);
+        saveEntityAttributes(documentId, attributes);
     }
 
-    private static boolean containsNumber(List<Object> list, long value) {
-        for (Object o : list) {
-            if (((Number) o).longValue() == value) {
+    /** Numbers read back from JSON can be Integer or Long, so compare by value. */
+    private static boolean containsNumber(List<Object> numbers, long value) {
+        for (Object number : numbers) {
+            if (((Number) number).longValue() == value) {
                 return true;
             }
         }
@@ -653,39 +717,146 @@ public class Resolver {
 
     // ================================================================ products
 
-    private void products() throws Exception {
-        Map<Long, Map<String, Integer>> descriptions = new LinkedHashMap<Long, Map<String, Integer>>();
-        for (MentionRow m : filterByType(EntityType.PRODUCT)) {
-            String code = m.attrString("code") != null ? m.attrString("code") : m.surface;
-            long id = entity(EntityType.PRODUCT, code, code, attrs("code", code));
-            if (!m.surface.equals(code)) {
-                if (!descriptions.containsKey(id)) {
-                    descriptions.put(id, new LinkedHashMap<String, Integer>());
+    /** One product per product code (HL-6200); each is named after its most common line-item description. */
+    private void resolveProducts() throws Exception {
+        // product id -> description -> how often it was used
+        Map<Long, Map<String, Integer>> descriptionCounts = new LinkedHashMap<>();
+        for (MentionRow mention : mentionsOfType(EntityType.PRODUCT)) {
+            String code = mention.attrString("code") != null ? mention.attrString("code") : mention.surface;
+            long productId = findOrCreateEntity(EntityType.PRODUCT, code, code, attributes("code", code));
+            if (!mention.surface.equals(code)) {
+                if (!descriptionCounts.containsKey(productId)) {
+                    descriptionCounts.put(productId, new LinkedHashMap<>());
                 }
-                Map<String, Integer> c = descriptions.get(id);
-                c.put(m.surface, c.containsKey(m.surface) ? c.get(m.surface) + 1 : 1);
+                Map<String, Integer> counts = descriptionCounts.get(productId);
+                counts.put(mention.surface, counts.containsKey(mention.surface) ? counts.get(mention.surface) + 1 : 1);
             }
-            assign(m, id, "product_code", m.confidence);
+            assignEntity(mention, productId, "product_code", mention.confidence);
         }
-        // name each product after its most common line-item description
-        for (Map.Entry<Long, Map<String, Integer>> e : descriptions.entrySet()) {
-            String best = null;
-            for (Map.Entry<String, Integer> d : e.getValue().entrySet()) {
-                if (best == null || d.getValue() > e.getValue().get(best)) {
-                    best = d.getKey();
+
+        for (Map.Entry<Long, Map<String, Integer>> product : descriptionCounts.entrySet()) {
+            String mostCommon = null;
+            for (Map.Entry<String, Integer> description : product.getValue().entrySet()) {
+                if (mostCommon == null || description.getValue() > product.getValue().get(mostCommon)) {
+                    mostCommon = description.getKey();
                 }
             }
-            entitiesDao.updateName(conn, e.getKey(), best);
+            entitiesDao.updateName(conn, product.getKey(), mostCommon);
         }
     }
 
     // ================================================================ write-back
 
-    private void flush() throws Exception {
-        for (MentionRow m : mentions.values()) {
-            mentionsDao.updateResolution(conn, m);
+    /** Writes every mention's entity, method and confidence, then recomputes the aliases table from them. */
+    private void saveResolutions() throws Exception {
+        for (MentionRow mention : mentionsById.values()) {
+            mentionsDao.updateResolution(conn, mention);
         }
         aliasesDao.rebuild(conn);
         Db.commit(conn);
+    }
+
+    // ================================================================ helpers
+
+    /**
+     * Returns the entity with this type and key, creating it when it does not exist yet.
+     * Non-null attributes are added to the entity (and replace existing values with the same name).
+     */
+    private long findOrCreateEntity(EntityType type, String key, String name, Map<String, Object> attributes) throws Exception {
+        EntityRow existing = entitiesDao.findByTypeAndKey(conn, type, key);
+        if (existing != null) {
+            if (attributes != null && !attributes.isEmpty()) {
+                Map<String, Object> merged = existing.attrs;
+                for (Map.Entry<String, Object> attribute : attributes.entrySet()) {
+                    if (attribute.getValue() != null) {
+                        merged.put(attribute.getKey(), attribute.getValue());
+                    }
+                }
+                entitiesDao.updateAttrs(conn, existing.id, merged);
+            }
+            return existing.id;
+        }
+        Map<String, Object> nonNullAttributes = new LinkedHashMap<>();
+        if (attributes != null) {
+            for (Map.Entry<String, Object> attribute : attributes.entrySet()) {
+                if (attribute.getValue() != null) {
+                    nonNullAttributes.put(attribute.getKey(), attribute.getValue());
+                }
+            }
+        }
+        return entitiesDao.insert(conn, type, name, key, nonNullAttributes);
+    }
+
+    private Map<String, Object> entityAttributes(long entityId) throws Exception {
+        return entitiesDao.findById(conn, entityId).attrs;
+    }
+
+    private void saveEntityAttributes(long entityId, Map<String, Object> attributes) throws Exception {
+        entitiesDao.updateAttrs(conn, entityId, attributes);
+    }
+
+    /** Adds a value to a list attribute of an entity (e.g. a person's "emails"), once. */
+    @SuppressWarnings("unchecked")
+    private void addToListAttribute(long entityId, String key, Object value) throws Exception {
+        Map<String, Object> attributes = entityAttributes(entityId);
+        List<Object> values = (List<Object>) attributes.get(key);
+        if (values == null) {
+            values = new ArrayList<>();
+            attributes.put(key, values);
+        }
+        if (!values.contains(value)) {
+            values.add(value);
+            saveEntityAttributes(entityId, attributes);
+        }
+    }
+
+    /** Records the decision for one mention (in memory; saveResolutions() writes it). */
+    private void assignEntity(MentionRow mention, Long entityId, String method, double confidence) {
+        mention.entityId = entityId;
+        mention.method = method;
+        mention.confidence = confidence;
+        String countKey = mention.etype.value() + ":" + method;
+        methodCounts.put(countKey, methodCounts.containsKey(countKey) ? methodCounts.get(countKey) + 1 : 1);
+    }
+
+    private void issue(String kind, String severity, String detail, Long fileId, Long entityId) throws Exception {
+        issuesDao.insert(conn, kind, severity, detail, fileId, entityId);
+    }
+
+    /** The mentions of one entity type, in id order. */
+    private List<MentionRow> mentionsOfType(EntityType type) {
+        List<MentionRow> ofType = new ArrayList<>();
+        for (MentionRow mention : mentionsById.values()) {
+            if (mention.etype == type) {
+                ofType.add(mention);
+            }
+        }
+        return ofType;
+    }
+
+    /** file id -> the company of the customer folder the file sits in. */
+    private Map<Long, Long> customerOfFolderByFile() {
+        Map<Long, Long> customerOfFolder = new HashMap<>();
+        for (MentionRow mention : mentionsOfType(EntityType.COMPANY)) {
+            if (mention.role == MentionRole.FOLDER) {
+                customerOfFolder.put(mention.fileId, mention.entityId);
+            }
+        }
+        return customerOfFolder;
+    }
+
+    /** The entity a mention was resolved to, or null (also when the mention id is null). */
+    private Long entityIdOfMention(Long mentionId) {
+        MentionRow mention = mentionId == null ? null : mentionsById.get(mentionId);
+        return mention == null ? null : mention.entityId;
+    }
+
+    /** attributes("role", "owner", "domain", x) -> {role: owner, domain: x}, keeping the order. */
+    private static Map<String, Object> attributes(Object... keysAndValues) {
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < keysAndValues.length; i += 2) {
+            attributes.put((String) keysAndValues[i], keysAndValues[i + 1]);
+        }
+        return attributes;
     }
 }

@@ -26,7 +26,7 @@ class NameMatcherTest {
         for (String c : CUSTOMERS) {
             Match m = NameMatcher.matchCompany(name, c, truncated);
             if (m != null && (best == null || m.score > (Double) best[2])) {
-                best = new Object[] {c, m.method, m.score};
+                best = new Object[] {c, m.methodName(), m.score};
             }
         }
         return best;
