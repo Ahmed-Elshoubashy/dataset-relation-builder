@@ -203,15 +203,12 @@ public class TextStage {
     }
 
     private static String pdf(byte[] data) throws Exception {
-        PDDocument doc = Loader.loadPDF(data);
-        try {
+        try (PDDocument doc = Loader.loadPDF(data)) {
             String text = new PDFTextStripper().getText(doc);
             if (Text.isBlank(text)) {
                 throw new NeedsOcr();
             }
             return text;
-        } finally {
-            doc.close();
         }
     }
 
@@ -246,8 +243,7 @@ public class TextStage {
     }
 
     private static String docx(byte[] data) throws Exception {
-        XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(data));
-        try {
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(data))) {
             StringBuilder sb = new StringBuilder();
             for (XWPFParagraph p : doc.getParagraphs()) {
                 sb.append(p.getText()).append('\n');
@@ -262,14 +258,11 @@ public class TextStage {
                 }
             }
             return sb.toString();
-        } finally {
-            doc.close();
         }
     }
 
     private static String xlsx(byte[] data) throws Exception {
-        XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(data));
-        try {
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(data))) {
             StringBuilder sb = new StringBuilder();
             for (Sheet sheet : wb) {
                 sb.append("# sheet: ").append(sheet.getSheetName()).append('\n');
@@ -287,8 +280,6 @@ public class TextStage {
                 }
             }
             return sb.toString();
-        } finally {
-            wb.close();
         }
     }
 

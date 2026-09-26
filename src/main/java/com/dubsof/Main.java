@@ -43,8 +43,7 @@ public class Main {
             Db.install(result.built, Config.DB_FILE);
             System.out.println("\nentities: " + result.entities);
         } else if (command.equals("rebuild") || command.equals("ocr")) {
-            Connection conn = Db.open(Config.DB_FILE, false);
-            try {
+            try (Connection conn = Db.open(Config.DB_FILE, false)) {
                 Db.init(conn);
                 if (command.equals("ocr")) {
                     TextStage.run(conn, ocr, null, Progress.CONSOLE);
@@ -52,8 +51,6 @@ public class Main {
                 }
                 Pipeline.detectOwner(conn, Progress.CONSOLE);
                 System.out.println("\nentities: " + Pipeline.graphStages(conn, Progress.CONSOLE));
-            } finally {
-                conn.close();
             }
         } else {
             System.err.println("usage: serve | run [--data DIR] [--ocr none|tesseract|claude] | rebuild | ocr [--ocr ...]");

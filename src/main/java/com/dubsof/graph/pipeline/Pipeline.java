@@ -50,8 +50,7 @@ public final class Pipeline {
         built.delete();
         new File(built.getPath() + "-wal").delete();
         new File(built.getPath() + "-shm").delete();
-        Connection conn = Db.open(built, false);
-        try {
+        try (Connection conn = Db.open(built, false)) {
             Db.init(conn);
             metaDao.set(conn, "data_root", dataRoot.getPath());
             metaDao.set(conn, "ocr_backend", ocr);
@@ -74,8 +73,6 @@ public final class Pipeline {
             metaDao.set(conn, "finished_at", now());
             Db.checkpoint(conn);
             return result;
-        } finally {
-            conn.close();
         }
     }
 

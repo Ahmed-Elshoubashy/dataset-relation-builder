@@ -103,11 +103,11 @@ public final class Db {
     public static Connection open(File file, boolean autoCommit) throws SQLException {
         file.getAbsoluteFile().getParentFile().mkdirs();
         Connection conn = DriverManager.getConnection("jdbc:sqlite:" + file.getAbsolutePath());
-        Statement st = conn.createStatement();
-        st.execute("PRAGMA journal_mode=WAL");
-        st.execute("PRAGMA foreign_keys=ON");
-        st.execute("PRAGMA busy_timeout=5000");
-        st.close();
+        try (Statement st = conn.createStatement()) {
+            st.execute("PRAGMA journal_mode=WAL");
+            st.execute("PRAGMA foreign_keys=ON");
+            st.execute("PRAGMA busy_timeout=5000");
+        }
         conn.setAutoCommit(autoCommit);
         return conn;
     }
@@ -142,11 +142,8 @@ public final class Db {
 
     /** Writes pending WAL changes into the main file, so the database is a single file again. */
     public static void checkpoint(Connection conn) throws SQLException {
-        PreparedStatement ps = conn.prepareStatement(CHECKPOINT);
-        try {
-            ps.executeQuery().close();   // returns a status row
-        } finally {
-            ps.close();
+        try (PreparedStatement ps = conn.prepareStatement(CHECKPOINT);
+             ResultSet rs = ps.executeQuery()) {   // returns a status row, which is ignored
         }
     }
 
@@ -166,16 +163,13 @@ public final class Db {
 
     /** Runs a SELECT and maps every row. */
     public static <T> List<T> list(Connection conn, String sql, RowMapper<T> mapper, Object... args) throws SQLException {
-        PreparedStatement ps = prepare(conn, sql, args);
-        try {
-            ResultSet rs = ps.executeQuery();
+        try (PreparedStatement ps = prepare(conn, sql, args);
+             ResultSet rs = ps.executeQuery()) {
             List<T> rows = new ArrayList<T>();
             while (rs.next()) {
                 rows.add(mapper.map(rs));
             }
             return rows;
-        } finally {
-            ps.close();
         }
     }
 
@@ -198,15 +192,12 @@ public final class Db {
     /** A "SELECT key, COUNT(*) … GROUP BY key" query as an ordered map. */
     public static Map<String, Long> counts(Connection conn, String sql, Object... args) throws SQLException {
         Map<String, Long> out = new LinkedHashMap<String, Long>();
-        PreparedStatement ps = prepare(conn, sql, args);
-        try {
-            ResultSet rs = ps.executeQuery();
+        try (PreparedStatement ps = prepare(conn, sql, args);
+             ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 out.put(rs.getString(1), rs.getLong(2));
             }
             return out;
-        } finally {
-            ps.close();
         }
     }
 
@@ -228,11 +219,8 @@ public final class Db {
     }
 
     public static int update(Connection conn, String sql, Object... args) throws SQLException {
-        PreparedStatement ps = prepare(conn, sql, args);
-        try {
+        try (PreparedStatement ps = prepare(conn, sql, args)) {
             return ps.executeUpdate();
-        } finally {
-            ps.close();
         }
     }
 

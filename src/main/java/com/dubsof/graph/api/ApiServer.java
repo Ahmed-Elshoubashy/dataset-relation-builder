@@ -63,9 +63,9 @@ public class ApiServer {
 
     public void start() throws Exception {
         // a fresh checkout has no graph yet: serve an empty one until the first analysis
-        Connection conn = Db.open(Config.DB_FILE, false);
-        Db.init(conn);
-        conn.close();
+        try (Connection conn = Db.open(Config.DB_FILE, false)) {
+            Db.init(conn);
+        }
 
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/", new HttpHandler() {
@@ -124,8 +124,7 @@ public class ApiServer {
     /** Read-only graph queries, each on its own connection. */
     private Object graphQuery(String path, Map<String, String> q) throws Exception {
         dbLock.readLock().lock();
-        Connection conn = Db.open(Config.DB_FILE, true);
-        try {
+        try (Connection conn = Db.open(Config.DB_FILE, true)) {
             GraphApi api = new GraphApi(conn);
             Matcher entity = ENTITY.matcher(path);
             Matcher file = FILE.matcher(path);
@@ -156,7 +155,6 @@ public class ApiServer {
             }
             throw new ApiException(404, "Not Found");
         } finally {
-            conn.close();
             dbLock.readLock().unlock();
         }
     }
@@ -176,11 +174,9 @@ public class ApiServer {
     private void sendRawFile(HttpExchange ex, long id) throws Exception {
         FileRow file;
         dbLock.readLock().lock();
-        Connection conn = Db.open(Config.DB_FILE, true);
-        try {
+        try (Connection conn = Db.open(Config.DB_FILE, true)) {
             file = filesDao.findById(conn, id);
         } finally {
-            conn.close();
             dbLock.readLock().unlock();
         }
         if (file == null) {
@@ -201,15 +197,12 @@ public class ApiServer {
         if (path.contains("..")) {
             throw new ApiException(404, "Not Found");
         }
-        InputStream in = ApiServer.class.getResourceAsStream("/web" + path);
-        if (in == null) {
-            throw new ApiException(404, "Not Found");
-        }
         byte[] data;
-        try {
+        try (InputStream in = ApiServer.class.getResourceAsStream("/web" + path)) {
+            if (in == null) {
+                throw new ApiException(404, "Not Found");
+            }
             data = Text.readAll(in);
-        } finally {
-            in.close();
         }
         String type = path.endsWith(".html") ? "text/html; charset=utf-8"
                 : path.endsWith(".js") ? "application/javascript; charset=utf-8"
@@ -224,9 +217,9 @@ public class ApiServer {
     private static void send(HttpExchange ex, int status, String type, byte[] data) throws IOException {
         ex.getResponseHeaders().set("Content-Type", type);
         ex.sendResponseHeaders(status, data.length);
-        OutputStream out = ex.getResponseBody();
-        out.write(data);
-        out.close();
+        try (OutputStream out = ex.getResponseBody()) {
+            out.write(data);
+        }
     }
 
     private static Map<String, Object> detail(String message) {

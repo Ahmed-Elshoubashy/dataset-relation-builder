@@ -280,14 +280,12 @@ public class Ingestor {
     }
 
     private static List<String> zipNames(byte[] data) {
-        try {
+        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(data), StandardCharsets.ISO_8859_1)) {
             List<String> names = new ArrayList<>();
-            ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(data), StandardCharsets.ISO_8859_1);
             ZipEntry e;
             while ((e = zin.getNextEntry()) != null) {
                 names.add(e.getName());
             }
-            zin.close();
             return names.isEmpty() ? null : names;
         } catch (IOException ex) {
             return null;

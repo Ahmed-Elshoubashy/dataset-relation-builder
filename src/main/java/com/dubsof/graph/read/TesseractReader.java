@@ -51,8 +51,7 @@ public class TesseractReader implements TextReader {
             }
         }
         StringBuilder out = new StringBuilder();
-        PDDocument doc = Loader.loadPDF(data);
-        try {
+        try (PDDocument doc = Loader.loadPDF(data)) {
             PDFRenderer renderer = new PDFRenderer(doc);
             for (int i = 0; i < doc.getNumberOfPages(); i++) {
                 BufferedImage page = renderer.renderImageWithDPI(i, DPI);
@@ -64,8 +63,6 @@ public class TesseractReader implements TextReader {
                     img.delete();
                 }
             }
-        } finally {
-            doc.close();
         }
         return out.toString().trim();
     }
