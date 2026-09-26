@@ -101,6 +101,7 @@ public class ClaudeAdjudicator implements Adjudicator {
         if (Config.ADJUDICATOR == AdjudicatorType.CLAUDE && Config.apiKeyFromEnv() != null) {
             try {
                 return new ClaudeAdjudicator();
+                
             } catch (Exception e) {
                 return new RuleAdjudicator();
             }

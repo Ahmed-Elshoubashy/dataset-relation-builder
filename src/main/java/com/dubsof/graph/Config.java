@@ -30,6 +30,7 @@ public final class Config {
 
     /** The organisation that owns the file share. Replaced by auto-detection during an analysis. */
     public static String ownerName = env("ERKG_OWNER", "Meridian Packaging Systems Ltd");
+    // TODO check where the domain is used
     public static String ownerDomain = env("ERKG_OWNER_DOMAIN", "meridianpackaging.co.uk");
 
     /** When set (Docker), the dataset picker cannot leave this folder. */
