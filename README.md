@@ -8,7 +8,7 @@ with the evidence behind every link. Java 21, SQLite, and a vanilla JS UI in `sr
 
 ```bash
 ./gradlew installDist
-build/install/entity-grapgh-resolver/bin/entity-grapgh-resolver      # http://localhost:8765
+build/install/entity-graph-resolver/bin/entity-graph-resolver      # http://localhost:8765
 ```
 
 Then click **Analyse dataset**, choose the folder, choose how scans are read (none / Tesseract / Claude + API key) and press **Analyse**.
@@ -142,7 +142,7 @@ docker compose up -d --build        # http://localhost:8766
   and can be chosen in the dialog. `ERKG_PROFILE` in `.env` sets the container's default.
 - Host port **8766** by default (`PORT=...` to change).
 - The graph, OCR cache and extracted files live in the `graph-data` volume; `docker compose down -v` deletes them.
-- Container name: `entity-grapgh-resolver-app-1`. Logs: `docker compose logs -f`.
+- Container name: `entity-graph-resolver-app-1`. Logs: `docker compose logs -f`.
 
 ## Code map
 

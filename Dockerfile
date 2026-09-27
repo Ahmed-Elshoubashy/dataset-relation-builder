@@ -15,7 +15,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends tesseract-ocr curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /src/build/install/entity-grapgh-resolver /opt/app
+COPY --from=build /src/build/install/entity-graph-resolver /opt/app
 COPY profiles /opt/app/profiles
 
 RUN useradd --create-home app \
@@ -35,4 +35,4 @@ EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
     CMD curl -fs http://127.0.0.1:8765/api/stats > /dev/null || exit 1
 
-ENTRYPOINT ["/opt/app/bin/entity-grapgh-resolver"]
+ENTRYPOINT ["/opt/app/bin/entity-graph-resolver"]

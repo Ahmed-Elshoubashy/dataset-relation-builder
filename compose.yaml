@@ -1,3 +1,6 @@
+# the Compose project name (otherwise the folder name): containers are entity-graph-resolver-app-1, ...
+name: entity-graph-resolver
+
 services:
   app:
     build: .
