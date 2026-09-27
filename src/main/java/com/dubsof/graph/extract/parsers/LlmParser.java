@@ -26,6 +26,7 @@ import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -175,12 +176,14 @@ public class LlmParser implements Parser, AutoCloseable {
         String ownerKey = owner.isKnown() ? names.companyKey(owner.name) : null;
         Map<String, Integer> mentionByName = new HashMap<>();
         mentionByName.put(TextFindings.THIS_DOCUMENT, ex.doc);
+        // what the templates already linked to this document: the sender is found again in the signature
+        Set<String> linkedByTemplates = linkedToDocument(ex);
 
         for (TextFindings.Found entity : found.entities) {
             Integer mention = null;
             if (entity.type == EntityType.COMPANY) {
                 mention = company(ex, entity.name, role, confidence, ownerKey);
-                if (!isOwner(names, entity.name, ownerKey)) {
+                if (!isOwner(names, entity.name, ownerKey) && !linkedByTemplates.contains(linkKey(ex, EntityType.COMPANY, entity.name))) {
                     ex.fact(ex.doc, RelationType.MENTIONS, mention);
                 }
             } else if (entity.type == EntityType.PERSON) {
@@ -193,7 +196,9 @@ public class LlmParser implements Parser, AutoCloseable {
                 mention = ex.addMentionWithConfidence(EntityType.PERSON, name, role, confidence, "org_mention", organisation,
                         "email", entity.email == null ? null : entity.email.toLowerCase(), "job_title", entity.jobTitle);
                 ex.fact(mention, RelationType.WORKS_FOR, organisation);
-                ex.fact(ex.doc, RelationType.MENTIONS, mention);
+                if (!linkedByTemplates.contains(linkKey(ex, EntityType.PERSON, name))) {
+                    ex.fact(ex.doc, RelationType.MENTIONS, mention);
+                }
             } else if (entity.type == EntityType.DOCUMENT) {
                 if (isThisOrKnownDocument(ex, entity.name)) {
                     continue;
@@ -206,7 +211,9 @@ public class LlmParser implements Parser, AutoCloseable {
                 ex.fact(mention, RelationType.HAS_DOCUMENT, ex.doc);
             } else if (entity.type == EntityType.PRODUCT) {
                 mention = ex.addMentionWithConfidence(EntityType.PRODUCT, entity.name, role, confidence);
-                ex.fact(ex.doc, RelationType.MENTIONS, mention);
+                if (!linkedByTemplates.contains(linkKey(ex, EntityType.PRODUCT, entity.name))) {
+                    ex.fact(ex.doc, RelationType.MENTIONS, mention);
+                }
             }
             if (mention != null) {
                 mentionByName.put(entity.name, mention);
@@ -215,6 +222,30 @@ public class LlmParser implements Parser, AutoCloseable {
         for (TextFindings.FoundRelation relation : found.relations) {
             ex.fact(mentionByName.get(relation.src), relation.rel, mentionByName.get(relation.dst));
         }
+    }
+
+    /**
+     * The companies, people and products the file's facts already link to its document, in either direction
+     * ("Dana Price SENT email", "letter ADDRESSED_TO Mueller GmbH"), as {@link #linkKey}s. A MENTIONS fact for
+     * one of them would store the same link twice; the new mention is still kept, as evidence for resolving it.
+     */
+    private static Set<String> linkedToDocument(Extraction ex) {
+        Set<String> linked = new HashSet<>();
+        for (Extraction.Fact fact : ex.facts) {
+            Integer other = fact.src == ex.doc ? Integer.valueOf(fact.dst) : fact.dst == ex.doc ? Integer.valueOf(fact.src) : null;
+            if (other != null) {
+                Extraction.Mention mention = ex.mentions.get(other);
+                linked.add(linkKey(ex, mention.etype, mention.surface));
+            }
+        }
+        return linked;
+    }
+
+    /** "person:dana price", "company:mueller": a name compared the way the resolver compares it. */
+    private static String linkKey(Extraction ex, EntityType type, String name) {
+        String key = type == EntityType.COMPANY ? ex.dataset.names.companyKey(name)
+                : type == EntityType.PERSON ? NameMatcher.personKey(name) : name.trim().toUpperCase();
+        return type.value() + ":" + key;
     }
 
     /** A company mention; the owner is its usual owner mention, so it merges with the owner's anchor. */

@@ -1,5 +1,6 @@
 package com.dubsof.graph;
 
+import com.dubsof.graph.api.GraphApi;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.pipeline.Pipeline;
 import com.dubsof.graph.read.OcrBackend;
@@ -12,8 +13,12 @@ import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -182,6 +187,42 @@ class GenericDatasetTest {
     }
 
     @Test
+    void aSenderIsNotAlsoMentionedByTheirOwnEmail() throws Exception {
+        // Dana Price SENT the reply, and signs it: the signature must not add "reply MENTIONS Dana Price"
+        long reply = documentOf("Mail/2024-03-13 reply.eml");
+        long dana = Db.number(conn, "SELECT id FROM entities WHERE etype = 'person' AND name = 'Dana Price'");
+        assertEquals(1, Db.number(conn, "SELECT COUNT(*) FROM relations WHERE src = ? AND dst = ? AND rel = 'SENT'", dana, reply));
+        assertEquals(0, Db.number(conn, "SELECT COUNT(*) FROM relations WHERE src = ? AND dst = ? AND rel = 'MENTIONS'", reply, dana));
+        assertEquals(0, pairsLinkedTwiceWithMentions(conn));
+    }
+
+    @Test
+    void aBusyNodeShowsEachNeighbourOnceAndCountsTheRest() throws Exception {
+        // Dana Price: the busiest entity of the fixture (9 neighbours), drawn with room for 3
+        long dana = Db.number(conn, "SELECT id FROM entities WHERE etype = 'person' AND name = 'Dana Price'");
+        long neighbours = Db.number(conn, "SELECT COUNT(DISTINCT CASE WHEN src = ? THEN dst ELSE src END) FROM relations"
+                + " WHERE src = ? OR dst = ?", dana, dana, dana);
+        Map<String, Object> graph = new GraphApi(conn).graph(dana, 1, 4, true, null);
+
+        List<Object> ids = new ArrayList<>();
+        for (Object node : (List<?>) graph.get("nodes")) {
+            ids.add(((Map<?, ?>) node).get("id"));
+        }
+        assertEquals(4, ids.size());
+        assertEquals(ids.size(), new HashSet<>(ids).size(), "each neighbour once: " + ids);
+        // what is not drawn is counted: every neighbour is either drawn or in a group
+        Set<String> groups = new HashSet<>();
+        int hidden = 0;
+        for (Object group : (List<?>) graph.get("hidden")) {
+            Map<?, ?> g = (Map<?, ?>) group;
+            groups.add(g.get("rel") + " " + g.get("dir") + " " + g.get("type"));
+            hidden += (Integer) g.get("count");
+        }
+        assertTrue(hidden >= neighbours - 3, hidden + " hidden of " + neighbours + " neighbours");
+        assertTrue(groups.contains("SENT out document"), "groups: " + groups);
+    }
+
+    @Test
     void freeMailDomainIsNotACompany() throws Exception {
         assertEquals(0, Db.number(conn, "SELECT COUNT(*) FROM entities WHERE etype = 'company' AND name = 'gmail.com'"));
     }
@@ -210,6 +251,12 @@ class GenericDatasetTest {
                 + " JOIN entities d ON d.id = r.dst WHERE s.name = ? AND r.rel = 'MENTIONS'", rs -> rs.getString(1), notes);
         assertTrue(linked.contains("José Müller"), "linked: " + linked);
         assertTrue(linked.stream().anyMatch(name -> name.endsWith("ller GmbH")), "linked: " + linked);
+    }
+
+    /** Entity pairs linked by MENTIONS and by another relation too, in either direction (should be 0). */
+    static long pairsLinkedTwiceWithMentions(Connection conn) throws Exception {
+        return Db.number(conn, "WITH u AS (SELECT MIN(src, dst) a, MAX(src, dst) b, rel FROM relations)"
+                + " SELECT COUNT(*) FROM u x JOIN u m ON m.a = x.a AND m.b = x.b AND m.rel = 'MENTIONS' WHERE x.rel != 'MENTIONS'");
     }
 
     private static List<String> companiesNamed(String like) throws Exception {

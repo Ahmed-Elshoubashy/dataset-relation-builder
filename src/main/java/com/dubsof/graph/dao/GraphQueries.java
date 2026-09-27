@@ -2,6 +2,7 @@ package com.dubsof.graph.dao;
 
 import com.dubsof.graph.dao.row.EntityRow;
 import com.dubsof.graph.dao.row.FileMentionRow;
+import com.dubsof.graph.dao.row.NeighbourRow;
 import com.dubsof.graph.dao.row.RelatedEntityRow;
 import com.dubsof.graph.dao.row.RelationRow;
 import com.dubsof.graph.dao.row.SourceRow;
@@ -64,13 +65,24 @@ public class GraphQueries {
                     + " WHERE r.rel = 'HAS_PROJECT' AND json_extract(p.attrs, '$.source') = 'folder'";
 
     /** Neighbours of one entity of the given types: projects, companies, products, people, then documents; strongest first. */
+    /**
+     * Neighbours, one row each (a neighbour linked twice takes one place), projects and companies first,
+     * then the strongest link; ties by id, so the same call always returns the same neighbours.
+     */
     private static final String NEIGHBOUR_IDS =
             "SELECT CASE WHEN r.src = ? THEN r.dst ELSE r.src END AS other FROM relations r"
                     + " JOIN entities e ON e.id = CASE WHEN r.src = ? THEN r.dst ELSE r.src END"
                     + " WHERE (r.src = ? OR r.dst = ?) AND (? OR r.derived = 0)"
                     + "   AND e.etype IN (SELECT value FROM json_each(?))"
-                    + " ORDER BY CASE e.etype WHEN 'project' THEN 0 WHEN 'company' THEN 1 WHEN 'product' THEN 2"
-                    + "   WHEN 'person' THEN 3 ELSE 4 END, r.weight DESC LIMIT ?";
+                    + " GROUP BY other"
+                    + " ORDER BY CASE MIN(e.etype) WHEN 'project' THEN 0 WHEN 'company' THEN 1 WHEN 'product' THEN 2"
+                    + "   WHEN 'person' THEN 3 ELSE 4 END, MAX(r.weight) DESC, other LIMIT ?";
+    /** Every relation of an entity to a neighbour of an allowed type: which neighbour, its type, the relation and direction. */
+    private static final String NEIGHBOUR_RELATIONS =
+            "SELECT DISTINCT e.id, e.etype, r.rel, CASE WHEN r.src = ? THEN 'out' ELSE 'in' END AS dir FROM relations r"
+                    + " JOIN entities e ON e.id = CASE WHEN r.src = ? THEN r.dst ELSE r.src END"
+                    + " WHERE (r.src = ? OR r.dst = ?) AND (? OR r.derived = 0)"
+                    + "   AND e.etype IN (SELECT value FROM json_each(?))";
 
     /** Relations whose two ends are both in a set of entities. */
     private static final String RELATIONS_AMONG =
@@ -130,6 +142,13 @@ public class GraphQueries {
             throws SQLException {
         return Db.list(conn, NEIGHBOUR_IDS, GraphQueries::mapFirstLong,
                 entityId, entityId, entityId, entityId, includeDerived ? 1 : 0, Json.write(types), limit);
+    }
+
+    /** Every relation between {@code entityId} and a neighbour whose type is in {@code types}. */
+    public List<NeighbourRow> findNeighbourRelations(Connection conn, long entityId, boolean includeDerived, List<String> types)
+            throws SQLException {
+        return Db.list(conn, NEIGHBOUR_RELATIONS, GraphQueries::mapNeighbour,
+                entityId, entityId, entityId, entityId, includeDerived ? 1 : 0, Json.write(types));
     }
 
     public List<RelationRow> findRelationsAmong(Connection conn, Collection<Long> ids, boolean includeDerived) throws SQLException {
@@ -192,6 +211,15 @@ public class GraphQueries {
         m.entityName = rs.getString("entity_name");
         m.entityType = rs.getString("entity_type");
         return m;
+    }
+
+    private static NeighbourRow mapNeighbour(ResultSet rs) throws SQLException {
+        NeighbourRow row = new NeighbourRow();
+        row.id = rs.getLong("id");
+        row.type = rs.getString("etype");
+        row.rel = rs.getString("rel");
+        row.dir = rs.getString("dir");
+        return row;
     }
 
     private static Long mapFirstLong(ResultSet rs) throws SQLException {

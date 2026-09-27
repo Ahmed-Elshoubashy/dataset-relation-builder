@@ -132,6 +132,13 @@ button, input { font: inherit; color: inherit; }
 .legend button { border: 0; background: none; cursor: pointer; font-size: 12.5px; padding: 2px 8px; border-radius: 6px; display: inline-flex; gap: 6px; align-items: center; }
 .legend button.off { opacity: .38; }
 .legend button:hover { background: var(--panel-2); }
+.not-drawn { position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px);
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; font-size: 12.5px;
+  background: var(--panel); border: 1px dashed var(--border); border-radius: 10px; padding: 6px 10px; box-shadow: var(--shadow); }
+.not-drawn .lbl { color: var(--muted); }
+.not-drawn button { border: 1px solid var(--border); background: var(--panel-2); border-radius: 999px; padding: 2px 9px; cursor: pointer;
+  font-size: 12.5px; display: inline-flex; gap: 6px; align-items: center; }
+.not-drawn button:hover { border-color: var(--accent); }
 .hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); font-size: 12px; color: var(--muted); background: var(--panel); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
 
 /* ---------- details ---------- */
@@ -162,6 +169,7 @@ table.items th, table.items td { text-align: left; padding: 4px 6px; border-bott
 table.items td.num, table.items th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .rel-group { margin-bottom: 10px; }
+.rel-group.flash { background: var(--accent-soft); border-radius: 8px; transition: background .4s; }
 .rel-label { font-size: 12.5px; font-weight: 600; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
 .rel-label .derived { font-size: 10.5px; font-weight: 500; color: var(--muted); border: 1px dashed var(--border); padding: 0 5px; border-radius: 4px; }
 .rel-targets { display: flex; flex-wrap: wrap; gap: 5px; }

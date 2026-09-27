@@ -21,15 +21,17 @@ public class RelationsDao {
     private static final String INSERT_EVIDENCE = "INSERT OR IGNORE INTO relation_evidence (relation_id, file_id) VALUES (?, ?)";
     private static final String COUNT = "SELECT COUNT(*) FROM relations";
 
-    /** person -> project, through any document they authored / sent / received / were addressed on. */
+    /**
+     * person -> project, through a document of the project they authored, sent or received.
+     * Not through "Attn:" lines (ATTENTION_OF) for now: a person's organisation comes from the document, so the
+     * same customer contact is split into one person per organisation it appears under, and every copy would get
+     * its own INVOLVED_IN. Add ATTENTION_OF back here once people are merged across organisations.
+     */
     private static final String DERIVE_INVOLVED_IN =
             "INSERT OR IGNORE INTO relations (src, dst, rel, weight, derived)"
                     + " SELECT p, proj, 'INVOLVED_IN', COUNT(*), 1 FROM ("
                     + "   SELECT r.src p, h.src proj FROM relations r JOIN relations h ON h.dst = r.dst AND h.rel = 'HAS_DOCUMENT'"
                     + "    WHERE r.rel IN ('AUTHORED', 'SENT', 'RECEIVED')"
-                    + "   UNION ALL"
-                    + "   SELECT r.dst p, h.src proj FROM relations r JOIN relations h ON h.dst = r.src AND h.rel = 'HAS_DOCUMENT'"
-                    + "    WHERE r.rel = 'ATTENTION_OF'"
                     + " ) GROUP BY p, proj";
     /** project -> product, through line items, specs and datasheets filed in the project. */
     private static final String DERIVE_USES_PRODUCT =

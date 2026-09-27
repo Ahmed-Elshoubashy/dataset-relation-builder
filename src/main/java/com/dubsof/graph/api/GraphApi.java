@@ -12,6 +12,7 @@ import com.dubsof.graph.dao.row.AliasRow;
 import com.dubsof.graph.dao.row.EntityRow;
 import com.dubsof.graph.dao.row.FileMentionRow;
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.dao.row.NeighbourRow;
 import com.dubsof.graph.dao.row.RelatedEntityRow;
 import com.dubsof.graph.dao.row.RelationRow;
 import com.dubsof.graph.dao.row.SourceRow;
@@ -102,7 +103,12 @@ public class GraphApi {
         return out;
     }
 
-    /** Neighbourhood of {@code center} (strongest edges first), or the customer/project overview when center is null. */
+    /**
+     * Neighbourhood of {@code center} (projects and companies first, then the strongest links), or the
+     * customer/project overview when center is null. A busy centre (a customer has 300+ links) cannot be drawn
+     * whole: "hidden" says what was left out, per relation and entity type ("ISSUED_TO in: 212 documents"),
+     * so the explorer can draw one group node for each instead of dropping them silently.
+     */
     public Map<String, Object> graph(Long center, int depth, int limit, boolean derived, String types) throws Exception {
         List<String> allowed = types != null ? Arrays.asList(types.split(",")) : ETYPES;
         Set<Long> nodes = new LinkedHashSet<Long>();
@@ -144,7 +150,38 @@ public class GraphApi {
         out.put("nodes", nodeMaps);
         out.put("edges", edges);
         out.put("center", center);
+        out.put("hidden", overview ? new ArrayList<Object>() : hiddenNeighbours(center, derived, allowed, nodes));
         return out;
+    }
+
+    /**
+     * The centre's neighbours that are not drawn, counted per (relation, direction, entity type), largest first.
+     * A neighbour linked in two ways is counted in both groups.
+     */
+    private List<Map<String, Object>> hiddenNeighbours(long center, boolean derived, List<String> allowed, Set<Long> drawn)
+            throws Exception {
+        Map<String, Set<Long>> byGroup = new LinkedHashMap<String, Set<Long>>();
+        for (NeighbourRow row : graphQueries.findNeighbourRelations(conn, center, derived, allowed)) {
+            if (!drawn.contains(row.id)) {
+                String group = row.rel + "|" + row.dir + "|" + row.type;
+                if (!byGroup.containsKey(group)) {
+                    byGroup.put(group, new HashSet<Long>());
+                }
+                byGroup.get(group).add(row.id);
+            }
+        }
+        List<Map<String, Object>> hidden = new ArrayList<Map<String, Object>>();
+        for (Map.Entry<String, Set<Long>> group : byGroup.entrySet()) {
+            String[] parts = group.getKey().split("\\|");
+            Map<String, Object> g = new LinkedHashMap<String, Object>();
+            g.put("rel", parts[0]);
+            g.put("dir", parts[1]);
+            g.put("type", parts[2]);
+            g.put("count", group.getValue().size());
+            hidden.add(g);
+        }
+        hidden.sort((a, b) -> Integer.compare((Integer) b.get("count"), (Integer) a.get("count")));
+        return hidden;
     }
 
     /** Probable aliases/abbreviations of whatever entity best matches q (for a future chat/MCP layer). */

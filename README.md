@@ -24,6 +24,25 @@ Settings are environment variables: `ERKG_DATA_ROOT`, `ERKG_WORK_DIR` (default `
 `ERKG_OCR_WORKERS`, `ERKG_CLAUDE_MODEL`, `ERKG_ADJUDICATOR`, `ERKG_PROFILE`, `ERKG_PROFILES_DIR`,
 `ERKG_OWNER`, `ERKG_OWNER_DOMAIN`, `ANTHROPIC_API_KEY`, `PORT`.
 
+## Graph explorer
+
+The left list shows every entity by type, most connected first. Clicking one centres the graph on it
+(1 or 2 hops); the details panel shows its spellings, its relations grouped by type, and the files behind it.
+
+- **Busy nodes.** A customer has 300+ links, and a view draws 70 nodes (160 at 2 hops). Neighbours are
+  drawn once each, projects and companies first, then the strongest links. What is left out is not
+  dropped silently: it becomes one dashed group node per relation and type next to the centre, and a
+  "Not drawn" bar under the graph ("178 documents · issued to", "73 people · works for"). Clicking either
+  opens that group in the details panel, with every entry listed.
+- **Each link once.** A file's free text (e-mail body, signature) does not add a `MENTIONS` link to
+  someone the file's template already linked ("Dana Price SENT the e-mail" is not also "the e-mail
+  MENTIONS Dana Price").
+- **Derived links** (dashed, "derived links" toggle) are shortcuts computed from paths: a person
+  `INVOLVED_IN` a project through a project document they authored, sent or received; a project
+  `USES_PRODUCT` through its line items and datasheets; a company `PURCHASED_OR_QUOTED` a product through
+  the line items of documents issued to it. "Attn:" lines do not count for `INVOLVED_IN` for now: a person's organisation comes from
+  the document, so the same contact exists once per organisation, and each copy would be linked.
+
 ## Other datasets
 
 Nothing in the code is tied to one dataset. What a dataset has of its own goes in an optional profile:

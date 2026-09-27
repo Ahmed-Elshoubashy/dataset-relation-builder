@@ -79,6 +79,11 @@ function initGraph() {
       { selector: "node[type='document']", style: { shape: "round-rectangle", "font-size": 8.5 } },
       { selector: "node[type='product']", style: { shape: "diamond" } },
       { selector: "node[type='project']", style: { shape: "round-hexagon" } },
+      { selector: "node[?group]", style: {
+          shape: "round-rectangle", "background-opacity": 0.22, "border-width": 2, "border-style": "dashed",
+          "border-color": (n) => c[n.data("type")], "font-size": 13, "font-weight": 600, color: css("--text"),
+          "text-max-width": 170, "min-zoomed-font-size": 0,
+      } },
       { selector: "node[?missing]", style: { "background-opacity": 0.25, "border-width": 1.5, "border-style": "dashed", "border-color": c.document } },
       { selector: "node.center", style: { "border-width": 3, "border-color": css("--text"), "font-size": 12, "font-weight": 600 } },
       { selector: "node:selected", style: { "border-width": 3, "border-color": css("--accent") } },
@@ -91,8 +96,8 @@ function initGraph() {
       { selector: ".faded", style: { opacity: 0.15 } },
     ],
   });
-  cy.on("tap", "node", (e) => select(+e.target.id(), { recenter: false }));
-  cy.on("dbltap", "node", (e) => expand(+e.target.id()));
+  cy.on("tap", "node", (e) => (e.target.data("group") ? openGroup(e.target.data()) : select(+e.target.id(), { recenter: false })));
+  cy.on("dbltap", "node", (e) => { if (!e.target.data("group")) expand(+e.target.id()); });
   cy.on("mouseover", "node", (e) => highlight(e.target));
   cy.on("mouseout", "node", () => cy.elements().removeClass("faded hl"));
 }
@@ -113,14 +118,59 @@ function toElements(g) {
   return [
     ...nodes.map((n) => ({ group: "nodes", data: nodeData(n) })),
     ...edges.map((e) => ({ group: "edges", data: { id: `e${e.id}`, source: String(e.src), target: String(e.dst), rel: e.rel.replaceAll("_", " ").toLowerCase(), derived: !!e.derived || undefined, width: Math.min(6, 0.8 + Math.log2(e.weight + 1) * 0.8) } })),
+    ...groupElements(g),
   ];
+}
+/**
+ * A busy centre is not drawn whole: one dashed node per group of neighbours left out ("212 documents ·
+ * Documents issued to"), linked to the centre. Clicking it opens that group in the details panel.
+ */
+function groupElements(g) {
+  if (g.center == null) return [];
+  return (g.hidden || []).filter((h) => !state.hidden.has(h.type)).flatMap((h) => {
+    const id = `more:${g.center}:${h.rel}:${h.dir}:${h.type}`;
+    const plural = TYPES.find((t) => t.key === h.type)?.label.toLowerCase() || h.type;
+    const relLabel = (REL[h.rel] || [h.rel])[0];   // "documents · issued to", "people · works for"
+    const [source, target] = h.dir === "out" ? [String(g.center), id] : [id, String(g.center)];
+    return [
+      { group: "nodes", data: { id, label: `+${h.count} ${plural} · ${relLabel.toLowerCase()}`, type: h.type, group: true, size: 30,
+                                center: g.center, rel: h.rel, dir: h.dir } },
+      { group: "edges", data: { id: `e${id}`, source, target, rel: relLabel.toLowerCase(), derived: true, width: 1 } },
+    ];
+  });
+}
+/** The same groups as a bar over the graph, readable at any zoom: "Not drawn: 178 documents issued to · 73 people". */
+function renderNotDrawn(g) {
+  const bar = $("#not-drawn");
+  const groups = g.center == null ? [] : (g.hidden || []).filter((h) => !state.hidden.has(h.type));
+  bar.hidden = !groups.length;
+  bar.innerHTML = `<span class="lbl">Not drawn:</span>` + groups.map((h, i) => {
+    const plural = TYPES.find((t) => t.key === h.type)?.label.toLowerCase() || h.type;
+    const relLabel = (REL[h.rel] || [h.rel])[0];   // "documents · issued to", "people · works for"
+    return `<button data-i="${i}"><span class="dot ${h.type}"></span>${h.count} ${esc(plural)} · ${esc(relLabel.toLowerCase())}</button>`;
+  }).join("");
+  bar.onclick = (ev) => {
+    const b = ev.target.closest("[data-i]");
+    if (b) openGroup({ center: g.center, ...groups[+b.dataset.i] });
+  };
+}
+/** Shows the centre's details, opened at the relation group the clicked group node stands for, with every entry listed. */
+async function openGroup(d) {
+  await select(d.center, { recenter: false });
+  const group = document.querySelector(`.rel-group[data-group="${d.rel}|${d.dir}"]`);
+  if (!group) return;
+  group.querySelector("[data-more]")?.click();
+  group.scrollIntoView({ block: "start", behavior: "smooth" });
+  group.classList.add("flash");
+  setTimeout(() => group.classList.remove("flash"), 1600);
 }
 const RING = { company: 7, project: 8, product: 6, person: 4, document: 2 };
 function ringLayout(centerId) {
   // ego view: centre in the middle, one ring per entity type
   cy.layout({
     name: "concentric", fit: true, padding: 50, animate: false, minNodeSpacing: 40, startAngle: -Math.PI / 2,
-    concentric: (n) => (n.id() === String(centerId) ? 10 : RING[n.data("type")] || 1),
+    // group nodes (what was left out) sit right around the centre, where they are seen first
+    concentric: (n) => (n.id() === String(centerId) ? 10 : n.data("group") ? 9 : RING[n.data("type")] || 1),
     levelWidth: () => 1,
   }).run();
 }
@@ -136,6 +186,7 @@ async function loadGraph(center) {
   const g = await api(`/api/graph?${p}`);
   cy.elements().remove();
   cy.add(toElements(g));
+  renderNotDrawn(g);
   if (center != null) {
     cy.getElementById(String(center)).addClass("center");
     cy.nodes().length > 14 ? ringLayout(center) : runLayout();
@@ -225,7 +276,7 @@ function renderDetails(e) {
       const list = groups[k];
       const label = (REL[rel] || [rel, rel])[dir === "out" ? 0 : 1];
       const shown = list.slice(0, 24);
-      h += `<div class="rel-group"><div class="rel-label">${esc(label)} <span class="deg">${list.length}</span>${list[0].derived ? `<span class="derived" title="inferred from multi-hop paths">derived</span>` : ""}</div>
+      h += `<div class="rel-group" data-group="${esc(k)}"><div class="rel-label">${esc(label)} <span class="deg">${list.length}</span>${list[0].derived ? `<span class="derived" title="inferred from multi-hop paths">derived</span>` : ""}</div>
         <div class="rel-targets">${shown.map((r) => `<span class="chip" data-id="${r.id}" title="${esc(r.name)}"><span class="dot ${r.type}"></span><span class="nm">${esc(r.name)}</span>${r.weight > 1 ? `<span class="w">×${r.weight}</span>` : ""}</span>`).join("")}
         ${list.length > shown.length ? `<button class="more" data-more="${k}">+${list.length - shown.length} more</button>` : ""}</div></div>`;
     }

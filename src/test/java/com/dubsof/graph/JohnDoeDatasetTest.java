@@ -75,6 +75,20 @@ class JohnDoeDatasetTest {
     }
 
     @Test
+    void withProfileNoLinkIsStoredTwice() throws Exception {
+        // the general extractor used to add MENTIONS next to SENT / AUTHORED / ADDRESSED_TO (656 pairs)
+        assertEquals(0, GenericDatasetTest.pairsLinkedTwiceWithMentions(withProfile));
+    }
+
+    @Test
+    void withProfileInvolvedInOnlyFromAuthoredSentOrReceived() throws Exception {
+        assertEquals(0, Db.number(withProfile, "SELECT COUNT(*) FROM relations i WHERE i.rel = 'INVOLVED_IN' AND NOT EXISTS ("
+                + " SELECT 1 FROM relations r JOIN relations h ON h.dst = r.dst AND h.rel = 'HAS_DOCUMENT'"
+                + " WHERE r.rel IN ('AUTHORED', 'SENT', 'RECEIVED') AND r.src = i.src AND h.src = i.dst)"));
+        assertTrue(Db.number(withProfile, "SELECT COUNT(*) FROM relations WHERE rel = 'INVOLVED_IN'") > 0);
+    }
+
+    @Test
     void withProfileEveryCompanyMentionResolved() throws Exception {
         assertEquals(0, unresolvedCompanyMentions(withProfile));
     }
