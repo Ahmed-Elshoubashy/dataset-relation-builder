@@ -135,7 +135,7 @@ Nothing in the code is tied to one dataset. What a dataset has of its own goes i
 ## Docker
 
 ```bash
-docker compose up -d --build        # http://localhost:8766
+docker compose up -d --build        # http://localhost:8765
 ```
 
 - Two-stage image: built with JDK 21, run on a Java 21 JRE.
@@ -149,7 +149,7 @@ docker compose up -d --build        # http://localhost:8766
   ```
 - The shipped profiles are in the image (`/opt/app/profiles`), so john-doe's is picked automatically
   and can be chosen in the dialog. `ERKG_PROFILE` in `.env` sets the container's default.
-- Host port **8766** by default (`PORT=...` to change).
+- Host port **8765** by default (`PORT=...` in `.env` to change).
 - The graph, OCR cache and extracted files live in the `graph-data` volume; `docker compose down -v` deletes them.
 - Container name: `entity-graph-resolver-app-1`. Logs: `docker compose logs -f`.
 

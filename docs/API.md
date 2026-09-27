@@ -1,7 +1,7 @@
 # HTTP API
 
 The explorer UI (`src/main/resources/web`) uses only this API; anything it shows can be fetched the same way.
-Everything is served by `api.ApiServer` on `http://localhost:8765` (`PORT`; 8766 in Docker).
+Everything is served by `api.ApiServer` on `http://localhost:8765` (`PORT` to change).
 
 - All responses are JSON (`application/json`), except `GET /api/files/{id}/raw` and the static UI files.
 - Only `POST /api/chat` and `POST /api/analysis` take a body. Everything else is a `GET` with query parameters.

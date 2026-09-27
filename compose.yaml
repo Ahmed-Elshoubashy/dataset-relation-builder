@@ -7,8 +7,8 @@ services:
     image: entity-graph-resolver
     ports:
       # localhost only: the API has no login and accepts an Anthropic key.
-      # 8766 by default.
-      - "127.0.0.1:${PORT:-8766}:8765"
+      # 8765 by default (PORT in .env to change).
+      - "127.0.0.1:${PORT:-8765}:8765"
     environment:
       # the dataset picker browses this laptop folder (default: your home folder)
       ERKG_BROWSE_ROOT: ${DATASETS_DIR:-${HOME}}
