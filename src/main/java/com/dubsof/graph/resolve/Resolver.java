@@ -1,5 +1,6 @@
 package com.dubsof.graph.resolve;
 
+import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.AliasesDao;
 import com.dubsof.graph.dao.EntitiesDao;
 import com.dubsof.graph.dao.FactsDao;
@@ -52,10 +53,6 @@ import java.util.TreeMap;
  */
 public class Resolver {
 
-    /** A company match at or above this score is accepted automatically. */
-    static final double ACCEPT = 0.80;
-    /** Between GRAY and ACCEPT, the Adjudicator decides; below GRAY, the name is a new company. */
-    static final double GRAY = 0.65;
 
     /** Facts whose other end names the customer (or product) a document belongs to. */
     private static final List<RelationType> COUNTERPARTY_RELATIONS = Arrays.asList(
@@ -280,8 +277,8 @@ public class Resolver {
      * Merges companies that step 3 kept apart only because of the order it saw them in: "Bayview Dental"
      * was created before "Bayview Dental Supplies Inc" came along, and kestrelfoods.com before its company
      * had the right name. Every company that is not an anchor is compared with every other one, both ways
-     * and domains with names, and a pair scoring ACCEPT or more becomes one company. The anchor is kept,
-     * else the named company over a domain, else the one with more mentions. Borderline pairs (GRAY..ACCEPT)
+     * and domains with names, and a pair scoring Config.COMPANY_MATCH_ACCEPT or more becomes one company. The anchor is kept,
+     * else the named company over a domain, else the one with more mentions. Borderline pairs (Config.COMPANY_MATCH_GRAY..ACCEPT)
      * stay apart. This is O(n²) in companies, which number in the tens or hundreds, so it is cheap.
      */
     private void mergeSameCompanies(Map<Long, String> knownCompanies) throws Exception {
@@ -295,7 +292,7 @@ public class Resolver {
                 }
                 for (Long otherId : new ArrayList<>(knownCompanies.keySet())) {
                     Match match = otherId.equals(companyId) ? null : sameCompany(companyId, otherId, knownCompanies);
-                    if (match == null || match.score < ACCEPT) {
+                    if (match == null || match.score < Config.COMPANY_MATCH_ACCEPT) {
                         continue;
                     }
                     long kept = keptCompany(companyId, otherId, mentionsByCompany);
@@ -382,7 +379,7 @@ public class Resolver {
     /**
      * Finds the company a spelling refers to, or creates a new company for it.
      * Scores the spelling against every known company and decides by the best score:
-     * at or above ACCEPT it is the same company, between GRAY and ACCEPT the Adjudicator decides,
+     * at or above Config.COMPANY_MATCH_ACCEPT it is the same company, between Config.COMPANY_MATCH_GRAY and Config.COMPANY_MATCH_ACCEPT the Adjudicator decides,
      * otherwise it is a new company.
      */
     private CompanyDecision decideCompany(MentionRow mention, boolean isDomain, boolean truncated, Map<Long, String> knownCompanies) throws Exception {
@@ -407,12 +404,12 @@ public class Resolver {
         CompanyCandidate best = candidates.isEmpty() ? null : candidates.get(0);
 
         // Good enough: it is this company.
-        if (best != null && best.score >= ACCEPT) {
+        if (best != null && best.score >= Config.COMPANY_MATCH_ACCEPT) {
             return new CompanyDecision(best.companyId, best.method, best.score);
         }
 
         // Borderline: ask the Adjudicator (by default it says no; with ERKG_ADJUDICATOR=claude it asks Claude).
-        if (best != null && best.score >= GRAY) {
+        if (best != null && best.score >= Config.COMPANY_MATCH_GRAY) {
             String candidateName = knownCompanies.get(best.companyId);
             Adjudicator.Verdict verdict = adjudicator.sameEntity(EntityType.COMPANY, mention.surface, candidateName,
                     "seen as " + mention.role.value() + " in file " + filesById.get(mention.fileId).path);
@@ -424,11 +421,11 @@ public class Resolver {
         // "Ask Harbor Robotics Inc": the free-text rules may take a sentence's first word into a name.
         // Without it, the name may be a known company.
         String withoutFirstWord = NameMatcher.withoutFirstWord(mention.surface);
-        if (mention.role == MentionRole.FREE_TEXT && (best == null || best.score < GRAY) && withoutFirstWord != null) {
+        if (mention.role == MentionRole.FREE_TEXT && (best == null || best.score < Config.COMPANY_MATCH_GRAY) && withoutFirstWord != null) {
             CompanyCandidate shorter = null;
             for (Map.Entry<Long, String> known : knownCompanies.entrySet()) {
                 Match match = names.matchCompany(withoutFirstWord, known.getValue(), false);
-                if (match != null && match.score >= ACCEPT && (shorter == null || match.score > shorter.score)) {
+                if (match != null && match.score >= Config.COMPANY_MATCH_ACCEPT && (shorter == null || match.score > shorter.score)) {
                     shorter = new CompanyCandidate(known.getKey(), match.score, match.methodName());
                 }
             }
@@ -601,7 +598,7 @@ public class Resolver {
         for (MentionRow mention : mentions) {
             Long customerId = entityIdOfMention(mention.attrId("company_mention"));
             String group = titleAndCustomer(mention);
-            if (customerId == null || filesByTitleAndCustomer.get(group).size() < 2 || projectByTitleAndCustomer.containsKey(group)) {
+            if (customerId == null || filesByTitleAndCustomer.get(group).size() < Config.TITLE_ONLY_PROJECT_MIN_FILES || projectByTitleAndCustomer.containsKey(group)) {
                 continue;
             }
             String customerKey = entitiesDao.findById(conn, customerId).key;
@@ -619,14 +616,14 @@ public class Resolver {
                 projectId = withThisTitle.get(0);
             }
             if (projectId == null && !hasCustomer && withThisTitle.isEmpty()
-                    && filesByTitleAndCustomer.get(titleAndCustomer(mention)).size() >= 2) {
+                    && filesByTitleAndCustomer.get(titleAndCustomer(mention)).size() >= Config.TITLE_ONLY_PROJECT_MIN_FILES) {
                 projectId = findOrCreateEntity(EntityType.PROJECT, "title:" + titleKey(mention.surface), mention.surface,
                         attributes("title", mention.surface, "source", "title_only"));
             }
             if (projectId == null) {
                 assignEntity(mention, null, "unresolved", 0);
             } else {
-                assignEntity(mention, projectId, "title_only", 0.6);
+                assignEntity(mention, projectId, "title_only", Config.TITLE_ONLY_PROJECT_CONFIDENCE);
             }
         }
     }

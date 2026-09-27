@@ -56,11 +56,7 @@ import static com.dubsof.graph.extract.parsers.ParserUtils.owner;
  */
 public class LlmParser implements Parser, AutoCloseable {
 
-    static final double LLM_CONFIDENCE = 0.7;
-    static final double RULES_CONFIDENCE = 0.6;
-    /** Longest text sent to Claude; the start of a business document holds the parties and references. */
-    private static final int MAX_CHARS = 12000;
-    /** Part of the cache key: bump it whenever the question, the JSON schema or MAX_CHARS change. */
+    /** Part of the cache key: bump it whenever the question, the JSON schema or Config.FREE_TEXT_MAX_INPUT_CHARS change. */
     static final int PROMPT_VERSION = 1;
 
     /** Relations Claude may use: the ones a document can state (the derived ones are computed later). */
@@ -92,7 +88,7 @@ public class LlmParser implements Parser, AutoCloseable {
 
     /** With a key, Claude reads the files; with null, the rules do. */
     public LlmParser(String apiKey) {
-        this(apiKey == null ? null : AnthropicOkHttpClient.builder().fromEnv().maxRetries(4).apiKey(apiKey).build());
+        this(apiKey == null ? null : AnthropicOkHttpClient.builder().fromEnv().maxRetries(Config.CLAUDE_MAX_RETRIES).apiKey(apiKey).build());
     }
 
     /** With this client (tests point it at a fake server); null: offline. */
@@ -144,7 +140,7 @@ public class LlmParser implements Parser, AutoCloseable {
         }
         TextFindings found = null;
         MentionRole role = MentionRole.FREE_TEXT;
-        double confidence = RULES_CONFIDENCE;
+        double confidence = Config.RULES_FINDING_CONFIDENCE;
         if (client != null) {
             String json = answers.containsKey(row.sha256) ? answers.get(row.sha256) : cached(row.sha256);
             if (json == null && !failedFiles.contains(row.sha256)) {
@@ -156,7 +152,7 @@ public class LlmParser implements Parser, AutoCloseable {
             if (json != null) {
                 found = fromJson(json);
                 role = MentionRole.LLM;
-                confidence = LLM_CONFIDENCE;
+                confidence = Config.CLAUDE_FINDING_CONFIDENCE;
             }
         }
         if (found == null) {   // offline, or Claude could not answer
@@ -287,10 +283,10 @@ public class LlmParser implements Parser, AutoCloseable {
                     + "this business document names, and how they relate. Use \"" + TextFindings.THIS_DOCUMENT
                     + "\" for the document itself. For a person give their e-mail, organisation and job title when "
                     + "the text says them, otherwise an empty string. Only list what the text states.\n\n"
-                    + Text.truncate(text, MAX_CHARS);
+                    + Text.truncate(text, Config.FREE_TEXT_MAX_INPUT_CHARS);
             MessageCreateParams params = MessageCreateParams.builder()
                     .model(Config.CLAUDE_MODEL)
-                    .maxTokens(4000L)
+                    .maxTokens(Config.FREE_TEXT_MAX_OUTPUT_TOKENS)
                     .putAdditionalBodyProperty("output_config", JsonValue.from(outputConfig()))
                     .putAdditionalHeader("anthropic-beta", "server-side-fallback-2026-07-01")
                     .putAdditionalBodyProperty("fallbacks", JsonValue.from("default"))
@@ -381,7 +377,7 @@ public class LlmParser implements Parser, AutoCloseable {
         format.put("type", "json_schema");
         format.put("schema", schema);
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("effort", "low");
+        config.put("effort", Config.CLAUDE_EFFORT);
         config.put("format", format);
         return config;
     }

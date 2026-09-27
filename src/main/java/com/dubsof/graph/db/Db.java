@@ -1,5 +1,6 @@
 package com.dubsof.graph.db;
 
+import com.dubsof.graph.Config;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -100,7 +101,7 @@ public final class Db {
         try (Statement st = conn.createStatement()) {
             st.execute("PRAGMA journal_mode=WAL");
             st.execute("PRAGMA foreign_keys=ON");
-            st.execute("PRAGMA busy_timeout=5000");
+            st.execute("PRAGMA busy_timeout=" + Config.SQLITE_BUSY_TIMEOUT_MS);
         }
         conn.setAutoCommit(autoCommit);
         return conn;

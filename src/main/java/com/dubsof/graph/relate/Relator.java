@@ -1,5 +1,6 @@
 package com.dubsof.graph.relate;
 
+import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.AliasesDao;
 import com.dubsof.graph.dao.EntitiesDao;
 import com.dubsof.graph.dao.FactsDao;
@@ -48,10 +49,6 @@ import java.util.regex.Pattern;
  */
 public class Relator {
 
-    /** Shortest alias the gazetteer searches for in free text (shorter names match too much). */
-    private static final int MIN_GAZETTEER_ALIAS = 6;
-    /** Confidence of a name found in free text, lower than any template field. */
-    private static final double GAZETTEER_CONFIDENCE = 0.6;
 
     private final RelationsDao relationsDao = new RelationsDao();
     private final FactsDao factsDao = new FactsDao();
@@ -225,7 +222,7 @@ public class Relator {
                     continue;
                 }
                 mentionsDao.insertResolved(conn, file.id, named.type, name, MentionRole.TEXT_MENTION,
-                        named.entityId, "gazetteer", GAZETTEER_CONFIDENCE);
+                        named.entityId, "gazetteer", Config.GAZETTEER_CONFIDENCE);
                 Set<Long> thisFile = new TreeSet<>();
                 thisFile.add(file.id);
                 saveRelation(documentId, named.entityId, RelationType.MENTIONS, thisFile);
@@ -238,14 +235,14 @@ public class Relator {
     }
 
     /**
-     * Names worth searching for: every spelling of a company or person, at least MIN_GAZETTEER_ALIAS long.
+     * Names worth searching for: every spelling of a company or person, at least Config.GAZETTEER_MIN_NAME_LENGTH long.
      * Left out: the owner (its name is on every letterhead) and names shared by two entities
      * (it would be unclear which one is meant).
      */
     private Map<String, NamedEntity> searchableNames() throws Exception {
         Map<String, Set<NamedEntity>> entitiesByName = new HashMap<>();
         String ownerKey = dataset.owner.isKnown() ? dataset.names.companyKey(dataset.owner.name) : "";
-        for (AliasRow alias : aliasesDao.findSearchable(conn, MIN_GAZETTEER_ALIAS, ownerKey)) {
+        for (AliasRow alias : aliasesDao.findSearchable(conn, Config.GAZETTEER_MIN_NAME_LENGTH, ownerKey)) {
             if (!entitiesByName.containsKey(alias.alias)) {
                 entitiesByName.put(alias.alias, new HashSet<>());
             }

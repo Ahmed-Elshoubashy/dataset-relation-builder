@@ -3,7 +3,7 @@ package com.dubsof.graph.resolve;
 import com.dubsof.graph.extract.EntityType;
 
 /**
- * Second opinion on borderline matches (score between GRAY and ACCEPT in the Resolver).
+ * Second opinion on borderline matches (score between Config.COMPANY_MATCH_GRAY and COMPANY_MATCH_ACCEPT).
  * The default RuleAdjudicator keeps borderline pairs apart; ClaudeAdjudicator
  * (ERKG_ADJUDICATOR=claude) asks Claude.
  */

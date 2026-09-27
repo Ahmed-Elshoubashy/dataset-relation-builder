@@ -1,5 +1,6 @@
 package com.dubsof.graph.api;
 
+import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.AliasesDao;
 import com.dubsof.graph.dao.EntitiesDao;
 import com.dubsof.graph.dao.FilesDao;
@@ -37,8 +38,6 @@ public class GraphApi {
             ETYPES.add(t.value());
         }
     }
-    /** How many evidence files the details panel lists. */
-    private static final int MAX_SOURCES = 400;
 
     private final GraphQueries graphQueries = new GraphQueries();
     private final EntitiesDao entitiesDao = new EntitiesDao();
@@ -99,7 +98,7 @@ public class GraphApi {
         out.put("degree", e.degree);
         out.put("aliases", aliasMaps(aliasesDao.findByEntity(conn, id)));
         out.put("relations", relatedMaps(graphQueries.findRelated(conn, id)));
-        out.put("sources", sourceMaps(graphQueries.findSources(conn, id, MAX_SOURCES)));
+        out.put("sources", sourceMaps(graphQueries.findSources(conn, id, Config.MAX_EVIDENCE_FILES_SHOWN)));
         return out;
     }
 

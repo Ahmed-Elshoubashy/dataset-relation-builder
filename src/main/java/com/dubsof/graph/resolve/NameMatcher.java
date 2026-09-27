@@ -32,7 +32,7 @@ import java.util.regex.Pattern;
  *   acronym       'BFG Ltd'                  ~ 'Blenheim Foods Group'         0.85
  *   email_domain  'falconaero.co.uk'         ~ 'Falcon Aerospace Components'  0.92
  * </pre>
- * The Resolver accepts a match at 0.80 or more (see {@link Resolver#ACCEPT}).
+ * The Resolver accepts a match at 0.80 or more (see Config.COMPANY_MATCH_ACCEPT).
  * The legal suffixes and free e-mail providers come from the dataset's profile (see dataset.Profile).
  */
 public final class NameMatcher {

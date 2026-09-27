@@ -2,6 +2,7 @@ package com.dubsof.graph.extract.parsers;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
+import com.dubsof.graph.Config;
 import com.dubsof.graph.TestGraph;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.dataset.Dataset;
@@ -41,7 +42,7 @@ class LlmParserTest {
         // everything found offline has the role free_text and a lower confidence
         Extraction.Mention mueller = mention(ex, "Mueller GmbH");
         assertEquals(MentionRole.FREE_TEXT, mueller.role);
-        assertEquals(LlmParser.RULES_CONFIDENCE, mueller.confidence);
+        assertEquals(Config.RULES_FINDING_CONFIDENCE, mueller.confidence);
 
         List<String> facts = facts(ex);
         assertTrue(facts.contains("reply MENTIONS Mueller GmbH"));
@@ -64,7 +65,7 @@ class LlmParserTest {
                 + " {\"src\": \"this document\", \"rel\": \"ISSUED_TO\", \"dst\": \"Müller GmbH\"},"
                 + " {\"src\": \"Lena Fischer\", \"rel\": \"OWNS\", \"dst\": \"Müller GmbH\"}]}";
         Extraction ex = document("Mail/order.eml");
-        LlmParser.addFindings(ex, LlmParser.fromJson(answer), MentionRole.LLM, LlmParser.LLM_CONFIDENCE, null);
+        LlmParser.addFindings(ex, LlmParser.fromJson(answer), MentionRole.LLM, Config.CLAUDE_FINDING_CONFIDENCE, null);
 
         assertEquals(MentionRole.LLM, mention(ex, "Lena Fischer").role);
         assertEquals("Buyer", mention(ex, "Lena Fischer").attrs.get("job_title"));

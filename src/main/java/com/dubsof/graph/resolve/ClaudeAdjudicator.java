@@ -48,7 +48,7 @@ public class ClaudeAdjudicator implements Adjudicator {
                     + "plausibly be different organisations.";
             MessageCreateParams params = MessageCreateParams.builder()
                     .model(Config.CLAUDE_MODEL)
-                    .maxTokens(2000L)
+                    .maxTokens(Config.ADJUDICATOR_MAX_OUTPUT_TOKENS)
                     .putAdditionalBodyProperty("output_config", JsonValue.from(outputConfig()))
                     .putAdditionalHeader("anthropic-beta", "server-side-fallback-2026-07-01")
                     .putAdditionalBodyProperty("fallbacks", JsonValue.from("default"))
@@ -86,7 +86,7 @@ public class ClaudeAdjudicator implements Adjudicator {
         format.put("type", "json_schema");
         format.put("schema", schema);
         Map<String, Object> config = new LinkedHashMap<String, Object>();
-        config.put("effort", "low");
+        config.put("effort", Config.CLAUDE_EFFORT);
         config.put("format", format);
         return config;
     }

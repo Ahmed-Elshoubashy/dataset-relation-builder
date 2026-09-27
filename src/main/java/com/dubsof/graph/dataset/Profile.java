@@ -100,8 +100,6 @@ public final class Profile {
 
     /** The dialog's choice for "no profile, only the defaults". */
     public static final String NONE = "none";
-    /** A shipped profile is suggested when its folder patterns match at least this share of the dataset's files. */
-    private static final double SUGGEST_MIN_SHARE = 0.3;
 
     /**
      * The profile for a dataset, first found wins:
@@ -160,7 +158,7 @@ public final class Profile {
     static Profile suggest(File dataRoot) throws IOException {
         List<String> paths = relativePaths(dataRoot);
         Profile best = null;
-        double bestShare = SUGGEST_MIN_SHARE;
+        double bestShare = Config.PROFILE_SUGGEST_MIN_SHARE;
         for (String name : available()) {
             Profile profile = read(new File(Config.PROFILES_DIR, name));
             if (profile.folderPatterns.isEmpty() || paths.isEmpty()) {

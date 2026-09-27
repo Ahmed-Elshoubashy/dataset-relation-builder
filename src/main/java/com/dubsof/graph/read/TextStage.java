@@ -92,7 +92,7 @@ public class TextStage {
             byte[] data = Files.readAllBytes(new File(row.blobPath).toPath());
             
             try {
-                String text = Text.truncate(readNative(row.kind, data), Config.MAX_TEXT_CHARS);
+                String text = Text.truncate(readNative(row.kind, data), Config.MAX_STORED_TEXT_CHARS);
                 FileStatus status = Text.isBlank(text) ? FileStatus.EMPTY : FileStatus.OK;
                 
                 increment(stats, status == FileStatus.OK ? "native" : "empty");

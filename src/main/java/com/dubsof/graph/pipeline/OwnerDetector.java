@@ -1,5 +1,6 @@
 package com.dubsof.graph.pipeline;
 
+import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.FilesDao;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.dataset.Owner;
@@ -30,19 +31,10 @@ import java.util.regex.Pattern;
  * domain is dropped.
  *
  * Being the owner is not harmless: its name is left out of MENTIONS, document counterparties and the
- * gazetteer, so a wrong owner hides a real customer's links. That is why both signals need a minimum,
+ * gazetteer, so a wrong owner hides a real customer's links. That is why both signals need a minimum (see Config.OWNER_MIN_...),
  * and a company that is merely mentioned often never becomes the owner. Without either signal there is no owner.
  */
 public final class OwnerDetector {
-
-    /** A letterhead must be the first line of at least this many PDFs (and 10% of them). */
-    private static final int MIN_LETTERHEAD_PDFS = 5;
-    /** The owner's domain must be on at least this many e-mails... */
-    private static final int MIN_EMAILS_WITH_DOMAIN = 5;
-    /** ...and on at least this share of the e-mails that have a company (not free-mail) domain. */
-    private static final double MIN_SHARE_OF_EMAILS = 0.3;
-    /** An organisation must be named in at least this many files to be taken as the owner. */
-    private static final int MIN_FILES_NAMING_OWNER = 2;
 
     /** A From/To/Cc header line. */
     private static final Pattern ADDRESS_HEADER = Pattern.compile("^(From|To|Cc): (.*)$", Pattern.MULTILINE);
@@ -78,7 +70,7 @@ public final class OwnerDetector {
         }
 
         boolean enough() {
-            return emails >= MIN_EMAILS_WITH_DOMAIN && share() >= MIN_SHARE_OF_EMAILS;
+            return emails >= Config.OWNER_MIN_EMAILS_WITH_DOMAIN && share() >= Config.OWNER_MIN_SHARE_OF_EMAILS;
         }
     }
 
@@ -116,8 +108,8 @@ public final class OwnerDetector {
         if (name == null) {
             String mailPart = mail == null ? "no company e-mail domain"
                     : String.format("no domain on %d+ e-mails and %.0f%% of them (best: %s on %d, %.0f%%)",
-                    MIN_EMAILS_WITH_DOMAIN, MIN_SHARE_OF_EMAILS * 100, mail.domain, mail.emails, mail.share() * 100);
-            return new Owner(null, null, "no letterhead on " + MIN_LETTERHEAD_PDFS + "+ PDFs, " + mailPart);
+                    Config.OWNER_MIN_EMAILS_WITH_DOMAIN, Config.OWNER_MIN_SHARE_OF_EMAILS * 100, mail.domain, mail.emails, mail.share() * 100);
+            return new Owner(null, null, "no letterhead on " + Config.OWNER_MIN_LETTERHEAD_PDFS + "+ PDFs, " + mailPart);
         }
         return new Owner(name, domain, reason.toString());
     }
@@ -137,7 +129,7 @@ public final class OwnerDetector {
         }
         Letterhead best = null;
         for (Map.Entry<String, Integer> e : firstLines.entrySet()) {
-            if ((best == null || e.getValue() > best.pdfs) && e.getValue() >= Math.max(MIN_LETTERHEAD_PDFS, 0.1 * pdfs)
+            if ((best == null || e.getValue() > best.pdfs) && e.getValue() >= Math.max(Config.OWNER_MIN_LETTERHEAD_PDFS, 0.1 * pdfs)
                     && names.hasLegalSuffix(e.getKey())) {
                 best = new Letterhead(e.getKey(), e.getValue());
             }
@@ -211,7 +203,7 @@ public final class OwnerDetector {
             String name = firstSpelling.get(e.getKey());
             boolean better = bestKey == null || e.getValue() > filesNaming.get(bestKey)
                     || (e.getValue().equals(filesNaming.get(bestKey)) && e.getKey().compareTo(bestKey) < 0);
-            if (names.matchDomain(domain, name) != null && e.getValue() >= MIN_FILES_NAMING_OWNER && better) {
+            if (names.matchDomain(domain, name) != null && e.getValue() >= Config.OWNER_MIN_FILES_NAMING_IT && better) {
                 bestKey = e.getKey();
             }
         }

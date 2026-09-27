@@ -1,5 +1,6 @@
 package com.dubsof.graph.extract;
 
+import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.FactsDao;
 import com.dubsof.graph.dao.FilesDao;
 import com.dubsof.graph.dao.MentionsDao;
@@ -66,10 +67,6 @@ import static com.dubsof.graph.extract.parsers.ParserUtils.stem;
  */
 public class Extractor {
 
-    /** Confidence of a company name read from a file name: often cut off ("Redwood Timber &amp; J"). */
-    private static final double FILENAME_COMPANY_CONFIDENCE = 0.7;
-    /** Confidence of a product code read from a file name. */
-    private static final double FILENAME_PRODUCT_CONFIDENCE = 0.8;
     /** A file name starting with a product code: "GB-40_—_Datasheet_2", "HL-6200-2_manual". */
     private static final Pattern FILENAME_PRODUCT_CODE = Pattern.compile("^([A-Z]{2,4}-\\d{2,4})(?:-\\d+)?_");
     private final Dataset dataset;
@@ -262,7 +259,7 @@ public class Extractor {
         String filenameCompany = documentNumbers.fromFilename(stem).company;
         if (filenameCompany != null) {
             Integer company = ex.addMentionWithConfidence(EntityType.COMPANY, filenameCompany, MentionRole.FILENAME,
-                    FILENAME_COMPANY_CONFIDENCE, "truncated", Boolean.TRUE);
+                    Config.FILENAME_COMPANY_CONFIDENCE, "truncated", Boolean.TRUE);
             boolean isBusinessDocument = documentNumbers.isNumberedType(ex.docMention().attrs.get("doc_type"));
             if (isBusinessDocument) {
                 ex.fact(ex.doc, RelationType.ISSUED_TO, company);
@@ -273,7 +270,7 @@ public class Extractor {
         if (productCode.lookingAt() && documentNumbers.fromFilename(stem).number == null) {
             String code = productCode.group(1);
             Integer product = ex.addMentionWithConfidence(EntityType.PRODUCT, code, MentionRole.FILENAME,
-                    FILENAME_PRODUCT_CONFIDENCE, "code", code);
+                    Config.FILENAME_PRODUCT_CONFIDENCE, "code", code);
             ex.fact(ex.doc, RelationType.DESCRIBES, product);
         }
     }

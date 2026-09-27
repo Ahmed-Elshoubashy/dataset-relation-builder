@@ -1,5 +1,6 @@
 package com.dubsof.graph.read;
 
+import com.dubsof.graph.Config;
 import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.util.Text;
 import org.apache.pdfbox.Loader;
@@ -18,7 +19,6 @@ import java.nio.file.Files;
  */
 public class TesseractReader implements TextReader {
 
-    private static final int DPI = 200;
 
     public TesseractReader() {
         if (!isInstalled()) {
@@ -54,7 +54,7 @@ public class TesseractReader implements TextReader {
         try (PDDocument doc = Loader.loadPDF(data)) {
             PDFRenderer renderer = new PDFRenderer(doc);
             for (int i = 0; i < doc.getNumberOfPages(); i++) {
-                BufferedImage page = renderer.renderImageWithDPI(i, DPI);
+                BufferedImage page = renderer.renderImageWithDPI(i, Config.TESSERACT_DPI);
                 File img = File.createTempFile("ocr", ".png");
                 try {
                     ImageIO.write(page, "png", img);

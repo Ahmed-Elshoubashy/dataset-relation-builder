@@ -40,7 +40,7 @@ public class ClaudeReader implements TextReader {
         if (apiKey == null && Config.apiKeyFromEnv() == null) {
             throw new ReaderUnavailableException("ANTHROPIC_API_KEY is not set");
         }
-        AnthropicOkHttpClient.Builder builder = AnthropicOkHttpClient.builder().fromEnv().maxRetries(4)
+        AnthropicOkHttpClient.Builder builder = AnthropicOkHttpClient.builder().fromEnv().maxRetries(Config.CLAUDE_MAX_RETRIES)
                 .apiKey(apiKey != null ? apiKey : Config.apiKeyFromEnv());
         this.client = builder.build();
         this.model = Config.CLAUDE_MODEL;
@@ -68,7 +68,7 @@ public class ClaudeReader implements TextReader {
         }
         MessageCreateParams params = MessageCreateParams.builder()
                 .model(model)
-                .maxTokens(16000L)
+                .maxTokens(Config.OCR_MAX_OUTPUT_TOKENS)
                 .outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.LOW).build())
                 // if the request is declined, let the API retry it on its recommended fallback model
                 .putAdditionalHeader("anthropic-beta", "server-side-fallback-2026-07-01")

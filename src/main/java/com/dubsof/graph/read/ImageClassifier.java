@@ -1,5 +1,6 @@
 package com.dubsof.graph.read;
 
+import com.dubsof.graph.Config;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -15,10 +16,6 @@ import java.io.IOException;
  */
 public final class ImageClassifier {
 
-    /** At or above this share of identical neighbouring pixels, the image is treated as a screenshot. */
-    static final double MIN_IDENTICAL_NEIGHBOURS = 0.95;
-    /** Rows compared; enough to judge the whole image without reading every row of a large one. */
-    private static final int ROWS_SAMPLED = 256;
 
     private ImageClassifier() {
     }
@@ -37,14 +34,14 @@ public final class ImageClassifier {
         if (image == null) {
             return true;
         }
-        return identicalNeighbourShare(image) >= MIN_IDENTICAL_NEIGHBOURS;
+        return identicalNeighbourShare(image) >= Config.SCREENSHOT_MIN_IDENTICAL_NEIGHBOURS;
     }
 
     /** Share (0..1) of pixels whose colour is exactly the same as the pixel to their right, on sampled rows. */
     static double identicalNeighbourShare(BufferedImage image) {
         int width = image.getWidth();
         int height = image.getHeight();
-        int rowStep = Math.max(1, height / ROWS_SAMPLED);
+        int rowStep = Math.max(1, height / Config.SCREENSHOT_ROWS_SAMPLED);
         long identical = 0;
         long compared = 0;
         for (int y = 0; y < height; y += rowStep) {

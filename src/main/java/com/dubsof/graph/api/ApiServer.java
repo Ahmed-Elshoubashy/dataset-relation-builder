@@ -81,7 +81,7 @@ public class ApiServer {
                 }
             }
         });
-        server.setExecutor(Executors.newFixedThreadPool(8));
+        server.setExecutor(Executors.newFixedThreadPool(Config.HTTP_THREADS));
         server.start();
         System.out.println("Entity graph explorer: http://localhost:" + port);
     }
@@ -132,15 +132,15 @@ public class ApiServer {
             }
             if (path.equals("/api/entities")) {
                 return api.entities(q.get("type"), q.get("q"), q.get("doc_type"),
-                        Math.min(intParam(q, "limit", 100), 1000), intParam(q, "offset", 0));
+                        Math.min(intParam(q, "limit", Config.ENTITY_LIST_DEFAULT_LIMIT), Config.ENTITY_LIST_MAX_LIMIT), intParam(q, "offset", 0));
             }
             if (entity.matches()) {
                 return api.entity(Long.parseLong(entity.group(1)));
             }
             if (path.equals("/api/graph")) {
                 Long center = q.containsKey("center") ? Long.valueOf(q.get("center")) : null;
-                int depth = Math.max(1, Math.min(intParam(q, "depth", 1), 2));
-                return api.graph(center, depth, Math.min(intParam(q, "limit", 70), 600),
+                int depth = Math.max(1, Math.min(intParam(q, "depth", 1), Config.GRAPH_MAX_DEPTH));
+                return api.graph(center, depth, Math.min(intParam(q, "limit", Config.GRAPH_DEFAULT_NODES), Config.GRAPH_MAX_NODES),
                         !"false".equals(q.get("derived")), q.get("types"));
             }
             if (path.equals("/api/aliases")) {
