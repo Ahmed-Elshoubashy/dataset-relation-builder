@@ -417,7 +417,7 @@ public class GraphApi {
     // ------------------------------------------------------------------ rows -> JSON maps
 
     /** The short form of an entity used in lists and graph nodes. */
-    private Map<String, Object> summary(EntityRow e) throws Exception {
+    public Map<String, Object> summary(EntityRow e) throws Exception {
         Map<String, Object> attrs = e.attrs;
         Object sub = null;
         if (e.etype == EntityType.DOCUMENT) {

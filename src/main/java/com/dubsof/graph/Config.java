@@ -151,6 +151,10 @@ public final class Config {
     /** "Find connection": the longest path searched between two entities, and how many shortest paths are shown. */
     public static final int CONNECTION_MAX_HOPS = 4;
     public static final int CONNECTION_MAX_PATHS = 5;
+    /** Chat: tool calls Claude may make for one question, the longest answer, and the most items a tool lists. */
+    public static final int CHAT_MAX_TOOL_ROUNDS = 8;
+    public static final long CHAT_MAX_OUTPUT_TOKENS = 2000;
+    public static final int CHAT_MAX_LIST = 50;
     /** Evidence files listed in an entity's details panel. */
     public static final int MAX_EVIDENCE_FILES_SHOWN = 400;
 

@@ -274,3 +274,30 @@ dialog.analyze form { display: flex; flex-direction: column; min-height: 0; flex
 .an-optional { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 4px; }
 .an-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--muted); }
 .an-check input { margin-top: 3px; }
+
+/* ------------------------------------------------------------ chat */
+.chat { position: absolute; right: 12px; bottom: 12px; width: min(420px, calc(100% - 24px)); height: min(600px, calc(100% - 70px));
+  display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow); z-index: 20; overflow: hidden; }
+.chat[hidden] { display: none; }
+.chat-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.chat-head b { font-size: 13.5px; }
+.chat-engine { font-size: 11px; color: var(--muted); margin-right: auto; }
+.chat-log { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; font-size: 13.5px; }
+.msg { max-width: 92%; padding: 8px 11px; border-radius: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+.msg.bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--border); }
+.msg.bot ul { margin: 4px 0 0; padding-left: 18px; }
+.msg.bot .chip { font-size: 12px; padding: 1px 7px; vertical-align: baseline; }
+.msg .meta { margin-top: 6px; font-size: 11px; color: var(--muted); }
+.msg .notice { margin-top: 6px; font-size: 12px; color: #9a6700; }
+.msg.thinking { color: var(--muted); font-style: italic; }
+.chat-suggest { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-suggest button { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.chat-suggest button:hover { border-color: var(--accent); }
+.chat-key { padding: 8px 12px 0; display: grid; gap: 4px; }
+.chat-key input, .chat-form input { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); font: inherit; font-size: 13px; outline: none; }
+.chat-key input:focus, .chat-form input:focus { border-color: var(--accent); background: var(--panel); }
+.chat-key small { font-size: 11px; color: var(--muted); }
+.chat-form { display: flex; gap: 8px; padding: 10px 12px 12px; }
+.chat-form input { flex: 1; min-width: 0; }

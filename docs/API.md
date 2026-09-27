@@ -4,7 +4,7 @@ The explorer UI (`src/main/resources/web`) uses only this API; anything it shows
 Everything is served by `api.ApiServer` on `http://localhost:8765` (`PORT`; 8766 in Docker).
 
 - All responses are JSON (`application/json`), except `GET /api/files/{id}/raw` and the static UI files.
-- Only `POST /api/analysis` takes a body. Everything else is a `GET` with query parameters.
+- Only `POST /api/chat` and `POST /api/analysis` take a body. Everything else is a `GET` with query parameters.
 - There is no authentication. Keep the port on localhost (Docker publishes it on `127.0.0.1` only).
 - Graph reads see a consistent graph: a new analysis replaces `data/graph.db` only once it is complete.
 
@@ -39,6 +39,7 @@ Every error has the same shape, with an HTTP status:
 | GET | [`/api/aliases`](#get-apialiases) | The spellings of the entity that best matches a text |
 | GET | [`/api/files/{id}`](#get-apifilesid) | A file's text and every mention found in it |
 | GET | [`/api/files/{id}/raw`](#get-apifilesidraw) | The original file |
+| POST | [`/api/chat`](#post-apichat) | Answers a question about the graph |
 | POST | [`/api/analysis`](#post-apianalysis) | Starts building a new graph from a folder |
 | GET | [`/api/analysis`](#get-apianalysis) | Progress and result of the current (or last) analysis |
 | GET | [`/api/analysis/options`](#get-apianalysisoptions) | What the "Analyse dataset" dialog can offer |
@@ -347,6 +348,63 @@ The original bytes of the file, including files inside zips and e-mail attachmen
 Content-Type: application/pdf
 Content-Disposition: inline; filename*=UTF-8''PO-3009_Acme%20Corporation.pdf
 ```
+
+## POST /api/chat
+
+Answers a question about the graph, in the context of the conversation so far. The server keeps no chat
+state: the client sends the whole conversation each time.
+
+- **With an API key** (`api_key`, else the server's `ANTHROPIC_API_KEY`), Claude answers by calling read-only
+  tools over the graph, at most 8 rounds (`Config.CHAT_MAX_TOOL_ROUNDS`). The tools are `overview`,
+  `find_entities`, `get_entity`, `list_related`, `get_aliases`, `find_connection`, `explain_relation` and
+  `show_in_graph` (`chat.ChatTools`). Claude never writes and never runs its own SQL.
+- **Without a key**, offline rules answer the common question shapes (`chat.ChatRules`): how many …, list …
+  sent to …, aliases of …, who works for …, how is X connected to Y, who is ….
+- If Claude fails (a rejected key, a network error), the rules answer instead and `notice` says why.
+
+**Request body** (`application/json`)
+
+```json
+{
+  "messages": [
+    { "role": "user", "content": "List all the quotes sent to Acme Corporation" }
+  ],
+  "api_key": null
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `messages` | yes | The conversation, oldest first: `role` is `user` or `assistant`, `content` is text. The last message must be the user's question |
+| `api_key` | no | Anthropic API key for this question only; never stored or logged. Omit it to use the server's key, or the offline rules when there is none |
+
+**Response**
+
+```json
+{
+  "answer": "**50** quotes linked to [[2|Acme Corporation]]:\n- [[1608|QUO-5067]] (issued to)\n- [[1869|QUO-5238]] (issued to)\n…",
+  "engine": "rules",
+  "notice": null,
+  "focus": 2,
+  "entities": [
+    { "id": 2, "type": "company", "name": "Acme Corporation" },
+    { "id": 1608, "type": "document", "name": "QUO-5067" }, …
+  ],
+  "tools": [
+    { "name": "resolve_name", "input": { "name": "Acme Corporation" } },
+    { "name": "list_related", "input": { "entity_id": 2, "type": "document", "doc_type": "quote", "limit": 50 } }
+  ]
+}
+```
+
+- **`answer`** is short Markdown: `**bold**` and `- ` list lines. Entities appear as `[[id|name]]`, which the explorer shows as links.
+- **`engine`** is `claude` or `rules`.
+- **`notice`** says something the user should know, or is null.
+- **`focus`** is the entity the answer is about, for the explorer to centre on, or null.
+- **`entities`** gives the type and name of every entity the tools returned, so each `[[id|name]]` can be drawn with its type.
+- **`tools`** lists the tool calls made, in order, with their input: how the answer was found.
+
+**Errors (400):** "messages must end with the user's question".
 
 ## POST /api/analysis
 

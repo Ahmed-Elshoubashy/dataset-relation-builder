@@ -404,6 +404,93 @@ function renderConnection(c) {
   };
 }
 
+/* ------------------------------------------------------------ chat */
+const chat = { messages: [], key: "", envKey: null };   // the key stays in this tab's memory only
+const CHAT_EXAMPLES = ["How many customers does the dataset have?", "List all the quotes sent to Acme Corporation",
+  "Get me any probable aliases or abbreviations for Acme", "How is Acme connected to Falcon Aerospace?"];
+
+async function openChat() {
+  $("#chat").hidden = false;
+  $("#hint").hidden = true;
+  if (chat.envKey === null) {
+    const opts = await api("/api/analysis/options").catch(() => ({}));
+    chat.envKey = !!opts.env_key;
+    $("#chat-key-wrap").hidden = chat.envKey;
+    $("#chat-engine").textContent = chat.envKey ? "Claude" : "offline rules (add a key for Claude)";
+  }
+  if (!$("#chat-log").children.length) chatWelcome();
+  $("#chat-input").focus();
+}
+function chatWelcome() {
+  $("#chat-log").innerHTML = `<div class="msg bot">Ask about the companies, people, projects, documents and products in this graph. Every answer comes from the graph; click a name to see it.
+    <div class="chat-suggest" style="margin-top:8px">${CHAT_EXAMPLES.map((q) => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join("")}</div></div>`;
+}
+/** Answer text -> HTML: [[id|name]] becomes a clickable chip, **bold** and "- " lines become bold and lists. */
+function chatHtml(text, entities) {
+  const byId = Object.fromEntries((entities || []).map((e) => [e.id, e]));
+  const inline = (s) => esc(s)
+    .replace(/\[\[(\d+)\|([^\]]+)\]\]/g, (m, id, name) => `<span class="chip" data-id="${id}"><span class="dot ${byId[id]?.type || ""}"></span><span class="nm">${name}</span></span>`)
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  let html = "", list = false;
+  for (const line of text.split("\n")) {
+    const item = line.match(/^\s*[-*] (.*)$/);
+    if (item && !list) { html += "<ul>"; list = true; }
+    if (!item && list) { html += "</ul>"; list = false; }
+    html += item ? `<li>${inline(item[1])}</li>` : line.trim() ? `<div>${inline(line)}</div>` : "";
+  }
+  return html + (list ? "</ul>" : "");
+}
+function chatBubble(cls, html) {
+  const el = document.createElement("div");
+  el.className = `msg ${cls}`;
+  el.innerHTML = html;
+  $("#chat-log").append(el);
+  $("#chat-log").scrollTop = $("#chat-log").scrollHeight;
+  return el;
+}
+async function askChat(question) {
+  question = question.trim();
+  if (!question) return;
+  $("#chat-input").value = "";
+  chat.messages.push({ role: "user", content: question });
+  chatBubble("user", esc(question));
+  const pending = chatBubble("bot thinking", "Looking it up…");
+  try {
+    const r = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: chat.messages, api_key: chat.key || null }),
+    });
+    const a = await r.json();
+    if (!r.ok) throw new Error(a.detail || r.statusText);
+    chat.messages.push({ role: "assistant", content: a.answer });
+    pending.className = "msg bot";
+    const used = [...new Set(a.tools.map((t) => t.name))].join(", ");
+    pending.innerHTML = chatHtml(a.answer, a.entities)
+      + `<div class="meta">${a.engine === "claude" ? "Claude" : "offline rules"}${used ? ` · ${esc(used)}` : ""}</div>`
+      + (a.notice ? `<div class="notice">${esc(a.notice)}</div>` : "");
+    $("#chat-engine").textContent = a.engine === "claude" ? "Claude" : chat.envKey || chat.key ? "offline rules" : "offline rules (add a key for Claude)";
+    if (a.focus != null) select(a.focus);
+  } catch (err) {
+    chat.messages.pop();
+    pending.className = "msg bot";
+    pending.innerHTML = `<div class="notice">Couldn't answer: ${esc(err.message)}</div>`;
+  }
+  $("#chat-log").scrollTop = $("#chat-log").scrollHeight;
+}
+function initChat() {
+  $("#btn-chat").onclick = () => ($("#chat").hidden ? openChat() : ($("#chat").hidden = true, $("#hint").hidden = false));
+  $("#chat-close").onclick = () => { $("#chat").hidden = true; $("#hint").hidden = false; };
+  $("#chat-clear").onclick = () => { chat.messages = []; chatWelcome(); };
+  $("#chat-key").oninput = (e) => { chat.key = e.target.value.trim(); };
+  $("#chat-form").onsubmit = (e) => { e.preventDefault(); askChat($("#chat-input").value); };
+  $("#chat-log").onclick = (e) => {
+    const q = e.target.closest("[data-q]");
+    if (q) return askChat(q.dataset.q);
+    const c = e.target.closest("[data-id]");
+    if (c) select(+c.dataset.id);
+  };
+}
+
 /* ------------------------------------------------------------ relation details (a click on an edge) */
 async function selectRelation(id) {
   state.selected = null;
@@ -719,6 +806,7 @@ async function refreshAll() {
 
 async function boot() {
   initGraph();
+  initChat();
   $("#legend").innerHTML = TYPES.map((t) => `<button data-type="${t.key}" title="show/hide ${t.label.toLowerCase()}"><span class="dot ${t.key}" style="width:8px;height:8px;border-radius:50%;display:inline-block"></span>${t.label}</button>`).join("");
   const s = await refreshAll();
   const m = location.hash.match(/entity=(\d+)/);

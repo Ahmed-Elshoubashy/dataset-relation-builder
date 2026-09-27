@@ -24,6 +24,7 @@
       <div id="search-results" class="search-results" hidden></div>
     </div>
     <div class="stats" id="stats"></div>
+    <button class="btn" id="btn-chat" type="button" title="Ask questions about the graph">Ask</button>
     <button class="btn primary" id="btn-analyze" type="button">Analyse dataset</button>
   </header>
 
@@ -49,6 +50,23 @@
       <div id="cy"></div>
       <div class="not-drawn" id="not-drawn" hidden></div>
       <div class="hint" id="hint">Click a node for details · double-click to expand its neighbourhood · drag to rearrange</div>
+      <div class="chat" id="chat" hidden>
+        <div class="chat-head">
+          <b>Ask the graph</b>
+          <span class="chat-engine" id="chat-engine"></span>
+          <button type="button" class="btn icon" id="chat-clear" title="New conversation">↺</button>
+          <button type="button" class="btn icon" id="chat-close" title="Close">×</button>
+        </div>
+        <div class="chat-log" id="chat-log"></div>
+        <div class="chat-key" id="chat-key-wrap" hidden>
+          <input id="chat-key" type="password" autocomplete="off" spellcheck="false" placeholder="Anthropic API key (optional)">
+          <small>With a key, Claude understands any wording. It stays in this tab and is never saved. Without one, simple questions are answered offline.</small>
+        </div>
+        <form class="chat-form" id="chat-form">
+          <input id="chat-input" type="text" autocomplete="off" placeholder="Ask about companies, documents, people…">
+          <button class="btn primary" type="submit">Ask</button>
+        </form>
+      </div>
     </section>
 
     <aside class="details" id="details">

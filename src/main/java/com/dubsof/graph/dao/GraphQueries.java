@@ -39,6 +39,23 @@ public class GraphQueries {
                     + " ORDER BY degree DESC, e.name LIMIT ? OFFSET ?";
     private static final String COUNT_ENTITIES = "SELECT COUNT(*) FROM entities e" + SEARCH_FILTER;
 
+    /**
+     * The owner's customers: companies with role "customer" (from customer folders). A dataset without customer
+     * folders has none, so there a customer is any company, except the owner, that documents are issued to.
+     */
+    private static final String CUSTOMERS =
+            "SELECT e.*, " + DEGREE + " AS degree FROM entities e WHERE e.etype = 'company' AND ("
+                    + "   json_extract(e.attrs, '$.role') = 'customer'"
+                    + "   OR (NOT EXISTS (SELECT 1 FROM entities c WHERE c.etype = 'company' AND json_extract(c.attrs, '$.role') = 'customer')"
+                    + "       AND COALESCE(json_extract(e.attrs, '$.role'), '') != 'owner'"
+                    + "       AND EXISTS (SELECT 1 FROM relations r WHERE r.dst = e.id AND r.rel = 'ISSUED_TO')))"
+                    + " ORDER BY degree DESC, e.name";
+    /** An entity whose name or one of whose spellings is exactly this text (any case), most connected first. */
+    private static final String EXACT_MATCH =
+            "SELECT e.*, " + DEGREE + " AS degree FROM entities e WHERE (? IS NULL OR e.etype = ?) AND (e.name = ? COLLATE NOCASE"
+                    + " OR e.key = ? COLLATE NOCASE OR EXISTS (SELECT 1 FROM aliases a WHERE a.entity_id = e.id AND a.alias = ? COLLATE NOCASE))"
+                    + " ORDER BY degree DESC LIMIT 1";
+
     private static final String ENTITY_WITH_DEGREE = "SELECT e.*, " + DEGREE + " AS degree FROM entities e WHERE e.id = ?";
     private static final String ENTITIES_WITH_DEGREE =
             "SELECT e.*, " + DEGREE + " AS degree FROM entities e"
@@ -143,6 +160,15 @@ public class GraphQueries {
     public long countEntities(Connection conn, String type, String docType, String search) throws SQLException {
         String like = search == null ? null : "%" + search + "%";
         return Db.number(conn, COUNT_ENTITIES, type, type, docType, docType, like, like, like, like);
+    }
+
+    public List<EntityRow> findCustomers(Connection conn) throws SQLException {
+        return Db.list(conn, CUSTOMERS, GraphQueries::mapEntityWithDegree);
+    }
+
+    /** The entity named exactly {@code name} (by name, key or spelling, any case), of this type if not null; or null. */
+    public EntityRow findExactMatch(Connection conn, String type, String name) throws SQLException {
+        return Db.first(conn, EXACT_MATCH, GraphQueries::mapEntityWithDegree, type, type, name, name, name);
     }
 
     public EntityRow findEntityWithDegree(Connection conn, long id) throws SQLException {

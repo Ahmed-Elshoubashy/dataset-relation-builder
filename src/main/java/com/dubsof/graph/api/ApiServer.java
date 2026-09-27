@@ -1,6 +1,7 @@
 package com.dubsof.graph.api;
 
 import com.dubsof.graph.Config;
+import com.dubsof.graph.chat.ChatService;
 import com.dubsof.graph.dao.FilesDao;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.db.Db;
@@ -20,8 +21,10 @@ import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -101,6 +104,10 @@ public class ApiServer {
             sendJson(ex, 200, analysis.status());
             return;
         }
+        if (path.equals("/api/chat") && method.equals("POST")) {
+            sendJson(ex, 200, chat(Json.read(Text.readAll(ex.getRequestBody()), Map.class)));
+            return;
+        }
         if (path.equals("/api/analysis/options")) {
             sendJson(ex, 200, analysis.options());
             return;
@@ -161,6 +168,35 @@ public class ApiServer {
                 return api.relation(Long.parseLong(relation.group(1)));
             }
             throw new ApiException(404, "Not Found");
+        } finally {
+            dbLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * A chat question: {"messages": [{"role": "user" | "assistant", "content": "..."}, ...], "api_key": optional}.
+     * The last message is the question. The graph is read under the read lock, like every other query.
+     */
+    private Object chat(Map<?, ?> body) throws Exception {
+        Object raw = body.get("messages");
+        List<Map<String, Object>> messages = new ArrayList<Map<String, Object>>();
+        if (raw instanceof List) {
+            for (Object m : (List<?>) raw) {
+                if (m instanceof Map && ((Map<?, ?>) m).get("content") != null) {
+                    Map<String, Object> message = new LinkedHashMap<String, Object>();
+                    message.put("role", "assistant".equals(((Map<?, ?>) m).get("role")) ? "assistant" : "user");
+                    message.put("content", String.valueOf(((Map<?, ?>) m).get("content")));
+                    messages.add(message);
+                }
+            }
+        }
+        if (messages.isEmpty() || !"user".equals(messages.get(messages.size() - 1).get("role"))) {
+            throw new ApiException(400, "messages must end with the user's question");
+        }
+        String typedKey = body.get("api_key") == null ? "" : String.valueOf(body.get("api_key")).trim();
+        dbLock.readLock().lock();
+        try (Connection conn = Db.open(Config.DB_FILE, true)) {
+            return new ChatService(conn, typedKey.isEmpty() ? null : typedKey).answer(messages).toMap();
         } finally {
             dbLock.readLock().unlock();
         }
