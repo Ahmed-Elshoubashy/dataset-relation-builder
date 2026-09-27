@@ -147,7 +147,8 @@ button, input { font: inherit; color: inherit; }
 .d-type { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
 .d-name { font-size: 20px; font-weight: 650; margin: 4px 0 2px; letter-spacing: -.015em; line-height: 1.25; }
 .d-sub { color: var(--muted); }
-.d-actions { display: flex; gap: 6px; margin: 12px 0 4px; }
+.d-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0 4px; }
+.d-actions .btn, .d-actions .stat { white-space: nowrap; }
 .section { margin-top: 20px; }
 .section h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; font-weight: 600; display: flex; justify-content: space-between; }
 .section h4 .n { font-weight: 500; }
