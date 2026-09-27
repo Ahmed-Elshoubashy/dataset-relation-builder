@@ -4,25 +4,146 @@ Finds every reference to a company, person, project, document or product across 
 decides which references are the same real-world thing, links them, and serves an explorer UI
 with the evidence behind every link. Java 21, SQLite, and a vanilla JS UI in `src/main/resources/web`.
 
-## Run
+## Getting started
+
+### Prerequisites
+
+| You need | For |
+|---|---|
+| [Git](https://git-scm.com/) | Getting the code |
+| [Docker](https://docs.docker.com/get-docker/) with Compose (Docker Desktop on macOS and Windows) | Option 1, the recommended way to run it |
+| [JDK 21](https://adoptium.net/) (`java -version` shows 21) | Option 2, running without Docker. Gradle itself is downloaded by `./gradlew` |
+| [Tesseract](https://tesseract-ocr.github.io/tessdoc/Installation.html), optional | Reading scans locally in Option 2 (`brew install tesseract`, `sudo apt install tesseract-ocr`). The Docker image already has it |
+| An [Anthropic API key](https://console.anthropic.com/), optional | Claude features; see [API key](#api-key-optional) |
+
+Get the code:
+
+```bash
+git clone git@github.com:Ahmed-Elshoubashy/dataset-relation-builder.git
+cd dataset-relation-builder
+```
+
+### Option 1: Docker (recommended)
+
+Nothing to install besides Docker: the image builds the app with JDK 21 and includes Tesseract.
+
+```bash
+docker compose up -d --build
+```
+
+Open <http://localhost:8765>. The first build pulls the images and takes a few minutes; later builds take
+seconds.
+
+The container can read your home folder (read-only, at its own path, so the dataset picker shows your real
+paths). To share less, or to pre-fill the dataset folder, create a `.env` file next to `compose.yaml`
+(it is git-ignored):
+
+```
+DATASETS_DIR=/Users/you/Documents
+DATASET=/Users/you/Documents/datasets/john-doe
+```
+
+| `.env` setting | Default | What it does |
+|---|---|---|
+| `DATASETS_DIR` | your home folder | The folder the container may read, and the only one the dataset picker can open |
+| `DATASET` | `DATASETS_DIR` | The dataset folder pre-filled in the "Analyse dataset" dialog |
+| `PORT` | `8765` | The port on your machine |
+| `ANTHROPIC_API_KEY` | none | Optional; see [API key](#api-key-optional) |
+| `ERKG_PROFILE` | none | A default profile for every dataset, e.g. `/opt/app/profiles/john-doe.json` (see [Other datasets](#other-datasets)) |
+
+Useful commands:
+
+```bash
+docker compose logs -f              # follow the logs
+docker compose down                 # stop (the graph is kept)
+docker compose down -v              # stop and delete the graph, the OCR cache and extracted files
+```
+
+- The image is built in two stages: with the official `gradle:9.0.0-jdk21` image (Gradle preinstalled),
+  then run on a Java 21 JRE. Library jars stay in a BuildKit cache between builds. Keep the image's
+  Gradle version equal to `gradle/wrapper/gradle-wrapper.properties`.
+- The graph, the OCR cache and extracted archive members live in the `graph-data` volume.
+- The shipped profiles are in the image (`/opt/app/profiles`), so john-doe's is picked automatically and
+  can be chosen in the dialog.
+- The container is called `entity-graph-resolver-app-1`. Its port is published on `127.0.0.1` only:
+  the API has no login.
+
+### Option 2: Gradle (no Docker)
+
+With JDK 21 installed, from the repository root:
 
 ```bash
 ./gradlew installDist
-build/install/entity-graph-resolver/bin/entity-graph-resolver      # http://localhost:8765
+build/install/entity-graph-resolver/bin/entity-graph-resolver
 ```
 
-Then click **Analyse dataset**, choose the folder, choose how scans are read (none / Tesseract / Claude + API key) and press **Analyse**.
+On Windows, use `gradlew.bat installDist` and `build\install\entity-graph-resolver\bin\entity-graph-resolver.bat`.
 
-Tests:
+Open <http://localhost:8765>. Start the server from the repository root: the shipped profiles
+(`profiles/`) are looked up from the current folder. The graph and the caches are written to `data/`.
+
+### Analyse a dataset
+
+1. Click **Analyse dataset**.
+2. Choose the dataset folder (any folder of files: PDFs, e-mails, Office files, scans, zips).
+3. Choose how scans and screenshots are read: **Without OCR**, **Local OCR (Tesseract)**, or **Claude**.
+4. Optionally: name the owner organisation, choose a profile, and tick "Also let Claude read the files no
+   template recognises".
+5. Press **Analyse**. The explorer keeps showing the previous graph until the new one is ready.
+
+### API key (optional)
+
+Everything works without an API key: reading files, OCR with Tesseract, matching, the graph explorer, and
+the chat's fixed questions. A key adds three Claude features: OCR of scans and screenshots, the general
+extractor for files no template recognises, and typing your own questions in the chat.
+
+The simplest way is to paste the key in the UI when a feature needs it, in the "Analyse dataset" dialog
+or the chat. It is used for that request only and never saved. To give the server a key instead, set
+`ANTHROPIC_API_KEY` before starting it (`export ANTHROPIC_API_KEY=...`), or put it in `.env` for Docker.
+Claude answers are cached by file content in `data/ocr_cache.db`, so analysing the same files again costs
+nothing.
+
+### Settings
+
+All settings are optional environment variables.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `PORT` | `8765` | The port the explorer listens on |
+| `ERKG_WORK_DIR` | `data` | Where the graph (`graph.db`), the Claude/OCR cache (`ocr_cache.db`) and extracted archive members are stored |
+| `ERKG_DATA_ROOT` | `../john-doe` | The dataset folder pre-filled in the "Analyse dataset" dialog |
+| `ERKG_BROWSE_ROOT` | none | The dataset picker cannot leave this folder (set by Docker) |
+| `ANTHROPIC_API_KEY` | none | The server's Anthropic key (see [API key](#api-key-optional)) |
+| `ERKG_CLAUDE_MODEL` | `claude-opus-5` | The Claude model for OCR, extraction, adjudication and the chat |
+| `ERKG_OCR_WORKERS` | `8` | Scans read, and files sent to Claude, in parallel |
+| `ERKG_OCR_PHOTOS` | `0` | `1` sends photos to OCR too (normally skipped: they carry no text) |
+| `ERKG_ADJUDICATOR` | `rules` | Who decides borderline company matches: `rules` keeps them apart, `claude` asks Claude |
+| `ERKG_PROFILE` | none | The server's default dataset profile (see [Other datasets](#other-datasets)) |
+| `ERKG_PROFILES_DIR` | `profiles` | The folder of shipped profiles offered in the dialog |
+| `ERKG_OWNER`, `ERKG_OWNER_DOMAIN` | none | The owner organisation, instead of detecting it from the files |
+
+Tuning values (matching thresholds, confidences, graph limits) are constants in `Config.java`.
+
+### Tests
 
 ```bash
 ./gradlew test          # unit tests, and GenericDatasetTest, which builds a graph from a small fixture
 ./gradlew datasetTest   # slow: builds john-doe (../john-doe or ERKG_DATA_ROOT) with and without its profile
 ```
 
-Settings are environment variables: `ERKG_DATA_ROOT`, `ERKG_WORK_DIR` (default `data`),
-`ERKG_OCR_WORKERS`, `ERKG_CLAUDE_MODEL`, `ERKG_ADJUDICATOR`, `ERKG_PROFILE`, `ERKG_PROFILES_DIR`,
-`ERKG_OWNER`, `ERKG_OWNER_DOMAIN`, `ANTHROPIC_API_KEY`, `PORT`.
+### Troubleshooting
+
+- **Port 8765 is already in use:** start with another port, `PORT=8080 build/install/...`, or set `PORT`
+  in `.env` for Docker.
+- **The dataset folder isn't in the picker (Docker):** the container only sees `DATASETS_DIR` (by default,
+  your home folder). Set it in `.env` to a folder that contains the dataset, then `docker compose up -d`.
+- **"Local OCR (Tesseract)" is greyed out:** Tesseract isn't installed (Option 2 only). Install it and
+  restart the server.
+- **The Profile menu is empty, or john-doe isn't recognised:** the server was started outside the
+  repository root. Start it from the root, or set `ERKG_PROFILES_DIR` to the `profiles` folder.
+- **"Anthropic rejected this API key":** check the key, or leave it empty to use the features that don't
+  need it.
+- **Start over:** stop the server and delete `data/` (Option 2), or `docker compose down -v` (Docker).
 
 ## Graph explorer
 
@@ -133,49 +254,24 @@ Nothing in the code is tied to one dataset. What a dataset has of its own goes i
 - **Money** is read with `£ $ € ¥` or an ISO code (`USD`, `EUR`, ...) and in `1,234.56` or `1.234,56`
   form; documents keep a `currency`, and the UI formats amounts in it.
 
-## Docker
-
-```bash
-docker compose up -d --build        # http://localhost:8765
-```
-
-- Two-stage image: built with the official `gradle:9.0.0-jdk21` image (Gradle comes preinstalled, so the
-  build doesn't download it), run on a Java 21 JRE. Library jars are kept in a BuildKit cache between
-  builds: the first build takes under a minute once the images are pulled, a rebuild after a code change
-  a few seconds. Keep the image's Gradle version equal to `gradle/wrapper/gradle-wrapper.properties`.
-  Tesseract is installed, so all three reading options work.
-- Your home folder is mounted **read-only at its own path**, so the dataset picker shows real laptop paths.
-  Share less with `DATASETS_DIR`, and pre-fill the dialog with `DATASET`, in a local `.env` (git-ignored):
-
-  ```
-  DATASETS_DIR=/Users/you/Documents
-  DATASET=/Users/you/Documents/datasets/john-doe
-  ```
-- The shipped profiles are in the image (`/opt/app/profiles`), so john-doe's is picked automatically
-  and can be chosen in the dialog. `ERKG_PROFILE` in `.env` sets the container's default.
-- Host port **8765** by default (`PORT=...` in `.env` to change).
-- The graph, OCR cache and extracted files live in the `graph-data` volume; `docker compose down -v` deletes them.
-- Container name: `entity-graph-resolver-app-1`. Logs: `docker compose logs -f`.
-
 ## Code map
 
 | Stage | Package / class | What it does |
 |---|---|---|
-| entry | `com.dubsof.Main`, `pipeline.Pipeline` | CLI commands; `Pipeline.build()` runs the 5 stages into a fresh database |
+| entry | `com.dubsof.Main`, `pipeline.Pipeline` | `Main` starts the server; `Pipeline.build()` runs the 5 stages into a fresh database |
 | 1 ingest | `ingest.Ingestor` | walks the folder, opens zips and e-mail attachments, sniffs real file types, hashes content |
 | 2 read | `read.TextStage` + `read.TextReader` | native text (PDFBox, JavaMail, POI); image-only files go to the OCR `TextReader`: `ClaudeReader`, `TesseractReader` or `NullReader`, behind `CachedReader` |
 | 3 extract | `extract.Extractor` | one parser per document template; produces mentions + facts, decides nothing |
 | 4 resolve | `resolve.NameMatcher`, `resolve.Resolver`, `resolve.Adjudicator` | named matching rules (abbreviation, typo, acronym, e-mail domain...), clusters mentions into entities |
-| 5 relate | `relate.Relator` | facts become relations with evidence files; derived links; consistency checks |
+| 5 relate | `relate.Relator` | facts become relations with evidence files; derived links; orphan documents pruned |
 | serve | `api.ApiServer`, `api.GraphApi`, `api.AnalysisApi` | JDK `HttpServer`: explorer API, "Analyse dataset" runner, static UI |
+| chat | `chat.ChatService`, `chat.ChatTools`, `chat.ChatPresets` | the explorer's chat: Claude with read-only tools, and the fixed questions |
 
 The HTTP API (every endpoint, its parameters, request body and response) is documented in
 [docs/API.md](docs/API.md).
 
-## Java version and style
+## Java version
 
-Targets **Java 21** (`options.release = 21`), but the code is written in plain **Java 8-style syntax**
-on purpose, so it is easy to follow: classic interfaces and classes, anonymous classes instead of
-lambdas, ordinary loops, no `var`, records, text blocks, switch expressions or `List.of`.
-
-PDF text comes from PDFBox, and Tesseract is called as a command-line tool.
+Java 21 (`options.release = 21`), built with Gradle 9 through the wrapper (`./gradlew`). PDF text comes
+from PDFBox, Office files from Apache POI, e-mails from JavaMail, and Tesseract is called as a
+command-line tool.
