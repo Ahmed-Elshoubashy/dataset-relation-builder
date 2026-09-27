@@ -45,6 +45,9 @@ public final class Pipeline {
         public boolean llmExtraction;
         /** The profile chosen in the Analyse dialog (a shipped profile's file name, or "none"); null: not chosen. */
         public String profile;
+        /** The server's owner (ERKG_OWNER) and its domain (ERKG_OWNER_DOMAIN); tests set their own. */
+        public String serverOwner = Config.OWNER;
+        public String serverOwnerDomain = Config.OWNER_DOMAIN;
     }
 
     /** What build() produced. */
@@ -90,7 +93,8 @@ public final class Pipeline {
             progress.update(2, "read", String.format("%,d read natively, %,d via OCR, %,d image-only left unread",
                     read.get("native"), read.get("ocr"), read.get("ocr_pending")));
             Owner owner = owner(conn, options, profile);
-            progress.update(2, "read", "Owner organisation: " + owner);
+            progress.update(2, "read", owner.isKnown() ? "Owner organisation: " + owner + (owner.reason == null ? "" : ", " + owner.reason)
+                    : "No owner organisation" + (owner.reason == null ? "" : ": " + owner.reason));
             Dataset dataset = new Dataset(owner, profile);
 
             Result result = new Result();
@@ -128,24 +132,47 @@ public final class Pipeline {
         return entitiesDao.countsByType(conn);
     }
 
-    /**
-     * The owner organisation: the one the user gave in the Analyse dialog, else ERKG_OWNER, else the
-     * profile's, else the one detected from the files (letterheads, sender domains, the most named
-     * organisation), else none.
-     */
+    /** The owner organisation (see {@link #chooseOwner}), detected from the files unless it is given. */
     private static Owner owner(Connection conn, Options options, Profile profile) throws Exception {
-        Owner detected = OwnerDetector.detect(conn, profile.names);
-        String domain = Config.OWNER_DOMAIN != null ? Config.OWNER_DOMAIN : detected.domain;
-        if (options.owner != null && !options.owner.trim().isEmpty()) {
-            return new Owner(options.owner.trim(), domain);
+        return chooseOwner(options, profile, OwnerDetector.detect(conn, profile.names));
+    }
+
+    /**
+     * The owner organisation, first found wins:
+     * <ol>
+     *   <li>the one typed in the Analyse dialog;</li>
+     *   <li>{@code owner} in the dataset's own profile.json;</li>
+     *   <li>ERKG_OWNER, the server's;</li>
+     *   <li>{@code owner} in a chosen, ERKG_PROFILE or suggested profile;</li>
+     *   <li>the one detected from the files (see OwnerDetector), or none.</li>
+     * </ol>
+     * A given name keeps a domain only when it goes with that name: ERKG_OWNER_DOMAIN with ERKG_OWNER, the
+     * profile's {@code ownerDomain} with its owner, else the detected domain if it matches the name. So an owner
+     * typed in the dialog never gets the domain of another organisation that happened to be detected.
+     */
+    static Owner chooseOwner(Options options, Profile profile, Owner detected) {
+        String dialogOwner = options.owner == null || options.owner.trim().isEmpty() ? null : options.owner.trim();
+        if (dialogOwner != null) {
+            return given(dialogOwner, null, detected, profile, "from the Analyse dialog");
         }
-        if (Config.OWNER != null) {
-            return new Owner(Config.OWNER, domain);
+        if (profile.owner != null && profile.fromDataset) {
+            return given(profile.owner, profile.ownerDomain, detected, profile, "from the dataset's profile.json");
+        }
+        if (options.serverOwner != null) {
+            return given(options.serverOwner, options.serverOwnerDomain, detected, profile, "from ERKG_OWNER");
         }
         if (profile.owner != null) {
-            return new Owner(profile.owner, domain);
+            return given(profile.owner, profile.ownerDomain, detected, profile, "from the profile");
         }
-        return new Owner(detected.name, domain);
+        return detected;
+    }
+
+    /** A given owner: its own domain, else the detected one if it matches the name, else none. */
+    private static Owner given(String name, String domain, Owner detected, Profile profile, String reason) {
+        if (domain == null && detected.domain != null && profile.names.matchDomain(detected.domain, name) != null) {
+            domain = detected.domain;
+        }
+        return new Owner(name, domain, reason);
     }
 
     private static String seconds(long start) {

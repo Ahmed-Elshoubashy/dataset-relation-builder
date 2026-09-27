@@ -1,6 +1,7 @@
 package com.dubsof.graph.dataset;
 
 import com.dubsof.graph.Config;
+import com.dubsof.graph.extract.parsers.DocumentNumbers;
 import com.dubsof.graph.resolve.NameMatcher;
 import com.dubsof.graph.util.Json;
 
@@ -11,6 +12,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -26,8 +28,10 @@ import java.util.stream.Stream;
  *   "folderPatterns": ["Clients/{company}/{job_id:P-\\d+} {title}/**"],
  *   "jobIdPattern": "P-\\d+",
  *   "owner": null,
+ *   "ownerDomain": null,
  *   "genericEmailDomains": ["gmail.com", "outlook.com"],
- *   "legalSuffixes": ["ltd", "inc", "gmbh"]
+ *   "legalSuffixes": ["ltd", "inc", "gmbh"],
+ *   "documentPrefixes": {"HR": "invoice", "SO": "order"}
  * }
  * </pre>
  */
@@ -53,20 +57,40 @@ public final class Profile {
     public final Pattern jobIdPattern;
     /** The owner organisation, when the profile names it (overrides detection). */
     public final String owner;
+    /** The owner's e-mail domain, when the profile gives it with the owner; null: detected, if it matches. */
+    public final String ownerDomain;
+    /** True for the dataset's own profile.json: its owner then beats the server's ERKG_OWNER. */
+    public final boolean fromDataset;
     /** Company names compared with this dataset's legal suffixes and free e-mail providers. */
     public final NameMatcher names;
+    /** Document-number prefixes -> document type ("HR" -> "invoice"), added to DocumentNumbers' defaults. */
+    public final Map<String, String> documentPrefixes;
 
-    public Profile(String source, List<FolderPattern> folderPatterns, Pattern jobIdPattern, String owner, NameMatcher names) {
+    public Profile(String source, boolean fromDataset, List<FolderPattern> folderPatterns, Pattern jobIdPattern,
+                   String owner, String ownerDomain, NameMatcher names, Map<String, String> documentPrefixes) {
         this.source = source;
+        this.fromDataset = fromDataset;
         this.folderPatterns = folderPatterns;
         this.jobIdPattern = jobIdPattern;
         this.owner = owner;
+        this.ownerDomain = ownerDomain;
         this.names = names;
+        this.documentPrefixes = documentPrefixes;
     }
 
     public static Profile defaults() {
-        return new Profile("defaults", new ArrayList<>(), null, null,
-                new NameMatcher(DEFAULT_LEGAL_SUFFIXES, DEFAULT_GENERIC_DOMAINS));
+        return new Profile("defaults", false, new ArrayList<>(), null, null, null,
+                new NameMatcher(DEFAULT_LEGAL_SUFFIXES, DEFAULT_GENERIC_DOMAINS), new LinkedHashMap<>());
+    }
+
+    /** The same profile with another source text, and marked as the dataset's own or not. */
+    private Profile withSource(String newSource, boolean isFromDataset) {
+        return new Profile(newSource, isFromDataset, folderPatterns, jobIdPattern, owner, ownerDomain, names, documentPrefixes);
+    }
+
+    /** A fresh document-number reader for one analysis: the defaults, this profile's prefixes and job ids. */
+    public DocumentNumbers documentNumbers() {
+        return new DocumentNumbers(documentPrefixes, jobIdPattern);
     }
 
     /** The dialog's choice for "no profile, only the defaults". */
@@ -90,7 +114,8 @@ public final class Profile {
     public static Profile forDataset(File dataRoot, String chosen) throws IOException {
         File inRoot = new File(dataRoot, "profile.json");
         if (inRoot.isFile()) {
-            return read(inRoot);
+            Profile own = read(inRoot);
+            return own.withSource(own.source, true);
         }
         if (chosen != null && !chosen.isEmpty()) {
             if (chosen.equals(NONE)) {
@@ -144,8 +169,8 @@ public final class Profile {
             }
             double share = matching / (double) paths.size();
             if (share >= bestShare) {
-                best = new Profile(profile.source + String.format(" (suggested: its folders match %.0f%% of the files)", share * 100),
-                        profile.folderPatterns, profile.jobIdPattern, profile.owner, profile.names);
+                best = profile.withSource(profile.source
+                        + String.format(" (suggested: its folders match %.0f%% of the files)", share * 100), false);
                 bestShare = share;
             }
         }
@@ -182,10 +207,17 @@ public final class Profile {
         }
         Pattern jobIdPattern = jobIdRegex == null ? null : Pattern.compile("\\b(?:" + jobIdRegex + ")\\b");
         String owner = json.get("owner") == null ? null : String.valueOf(json.get("owner"));
+        String ownerDomain = json.get("ownerDomain") == null ? null : String.valueOf(json.get("ownerDomain")).toLowerCase();
         NameMatcher names = new NameMatcher(
                 (List<String>) list(json.get("legalSuffixes"), DEFAULT_LEGAL_SUFFIXES),
                 (List<String>) list(json.get("genericEmailDomains"), DEFAULT_GENERIC_DOMAINS));
-        return new Profile(file.getPath(), folderPatterns, jobIdPattern, owner, names);
+        Map<String, String> documentPrefixes = new LinkedHashMap<>();
+        if (json.get("documentPrefixes") instanceof Map) {
+            for (Map.Entry<?, ?> prefix : ((Map<?, ?>) json.get("documentPrefixes")).entrySet()) {
+                documentPrefixes.put(String.valueOf(prefix.getKey()).toUpperCase(), String.valueOf(prefix.getValue()));
+            }
+        }
+        return new Profile(file.getPath(), false, folderPatterns, jobIdPattern, owner, ownerDomain, names, documentPrefixes);
     }
 
     /**

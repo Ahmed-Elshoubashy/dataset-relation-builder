@@ -10,9 +10,7 @@ import com.dubsof.graph.ingest.Ingestor;
 import javax.mail.internet.AddressException;
 import javax.mail.internet.InternetAddress;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -20,23 +18,6 @@ import java.util.regex.Pattern;
 public final class ParserUtils {
 
     public static final String DATE = "\\d{1,2} [A-Z][a-z]{2} \\d{4}";
-    public static final Pattern DOC_NO = Pattern.compile("\\b(INV|QUO|PO|DN|DWG|CAL|SPEC|DS|ISO)-(\\d{3,6})\\b");
-    /** Equipment/part codes like HL-6200, VFD-15, SM-750 (document-number prefixes excluded). */
-    public static final Pattern PRODUCT_CODE = Pattern.compile("\\b(?!(?:INV|QUO|PO|DN|DWG|CAL|SPEC|DS|ISO|JOB|SN)-)([A-Z]{2,4}-\\d{2,4})\\b");
-    /** Document-number prefix -> document type. */
-    public static final Map<String, String> PREFIX_TYPES = new HashMap<>();
-
-    static {
-        PREFIX_TYPES.put("INV", "invoice");
-        PREFIX_TYPES.put("QUO", "quote");
-        PREFIX_TYPES.put("PO", "purchase_order");
-        PREFIX_TYPES.put("DN", "delivery_note");
-        PREFIX_TYPES.put("DWG", "drawing");
-        PREFIX_TYPES.put("CAL", "calibration_cert");
-        PREFIX_TYPES.put("SPEC", "specification");
-        PREFIX_TYPES.put("DS", "datasheet");
-        PREFIX_TYPES.put("ISO", "iso_certificate");
-    }
 
     private ParserUtils() {
     }
@@ -59,16 +40,14 @@ public final class ParserUtils {
         return ex.doc;
     }
 
-    /** Cross-references anywhere in the text: document numbers and job codes. */
+    /** Cross-references anywhere in the text: document numbers (see DocumentNumbers) and job ids. */
     public static void refs(Extraction ex, String text, String skipKey) {
-        Matcher m = DOC_NO.matcher(text);
-        while (m.find()) {
-            String key = m.group();
-            String prefix = m.group(1);
-            if (key.equals(skipKey) || prefix.equals("SPEC") || prefix.equals("DS") || prefix.equals("ISO")) {
+        for (DocumentNumbers.Found found : ex.documentNumbers.references(text)) {
+            if (found.number.equals(skipKey)) {
                 continue;
             }
-            ex.fact(ex.doc, RelationType.REFERENCES, ex.addMentionWithConfidence(EntityType.DOCUMENT, key, MentionRole.REFERENCE, 0.9, "key", key, "doc_type", PREFIX_TYPES.get(prefix)));
+            ex.fact(ex.doc, RelationType.REFERENCES, ex.addMentionWithConfidence(EntityType.DOCUMENT, found.number,
+                    MentionRole.REFERENCE, 0.9, "key", found.number, "doc_type", found.docType));
         }
         Pattern jobIdPattern = ex.dataset.profile.jobIdPattern;   // null: this dataset has no job ids
         Matcher j = jobIdPattern == null ? null : jobIdPattern.matcher(text);
@@ -137,20 +116,6 @@ public final class ParserUtils {
         String s = stem.replaceFirst("\\s*\\(\\d+\\)$", "");
         s = s.replaceFirst("(__\\d+|[_ -]v\\d+|[_ -]?(FINAL|final|revised|copy|draft))$", "");
         return s.replaceAll("^[ _-]+|[ _-]+$", "");
-    }
-
-    /** INV-8002_Acme Corporation -> number "INV-8002", type "invoice", company "Acme Corporation"; all null when not numbered. */
-    public static FilenameDocument filenameDoc(String stem) {
-        Matcher m = Pattern.compile("^(INV|QUO|PO|DN|DWG|CAL)-(\\d+)(?:[_ ](.*))?$").matcher(stem);
-        if (!m.matches()) {
-            return new FilenameDocument(null, null, null);
-        }
-        String rest = m.group(3) == null ? "" : m.group(3).trim();
-        String company = null;
-        if (!rest.isEmpty() && !Pattern.compile("^(Rev\\w+|Calibration|v\\d+|FINAL|revised.*)$", Pattern.CASE_INSENSITIVE).matcher(rest).matches()) {
-            company = rest;
-        }
-        return new FilenameDocument(m.group(1) + "-" + m.group(2), PREFIX_TYPES.get(m.group(1)), company);
     }
 
     public static String orEmpty(String s) {

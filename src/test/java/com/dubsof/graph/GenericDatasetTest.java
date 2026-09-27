@@ -33,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       cc a gmail address) to "Jose Mueller", a follow-up mentioning "Mueller GmbH", and e-mails from
  *       Kestrel (kestrelfoods.com) and Bayview (bayviewdental.com);</li>
  *   <li>Mail/2024-04-05 floor plan.eml: "Jose Muller" writes from a second address at mueller-gmbh.de;</li>
+ *   <li>Mail/2024-03-01 payment.eml: "Please pay invoice HR-1041";</li>
  *   <li>Notes/: free-text call notes naming José Müller, Mueller GmbH and Dana Price, and a sentence
  *       starting "Ask Kestrel Foods Inc ...".</li>
  * </ul>
@@ -61,7 +62,7 @@ class GenericDatasetTest {
 
     @Test
     void everyFileIsRead() throws Exception {
-        assertEquals(11, Db.number(conn, "SELECT COUNT(*) FROM files WHERE status = 'ok'"));
+        assertEquals(12, Db.number(conn, "SELECT COUNT(*) FROM files WHERE status = 'ok'"));
     }
 
     @Test
@@ -150,6 +151,34 @@ class GenericDatasetTest {
         // "Job: Clean Room Cell" is on HR-1041 only: too little to create a project from
         assertEquals(0, Db.number(conn, "SELECT COUNT(*) FROM entities WHERE etype = 'project'"
                 + " AND json_extract(attrs, '$.title') = 'Clean Room Cell'"));
+    }
+
+    @Test
+    void invoicesAreKeyedByTheirNumbers() throws Exception {
+        // "Invoice No: HR-1040": the HR prefix is learned from the label, so it is not a file: key
+        for (String number : new String[] {"HR-1040", "HR-1041", "HR-1042", "HR-1043"}) {
+            assertEquals(number, Db.first(conn, "SELECT key FROM entities WHERE id = ?", rs -> rs.getString(1),
+                    documentOf("Sales/Invoices/" + number + ".pdf")), number);
+            assertEquals("invoice", Db.first(conn, "SELECT json_extract(attrs, '$.doc_type') FROM entities WHERE key = ?",
+                    rs -> rs.getString(1), number), number);
+        }
+        assertEquals(0, Db.number(conn, "SELECT COUNT(*) FROM entities WHERE etype = 'document' AND key LIKE 'file:%'"
+                + " AND json_extract(attrs, '$.doc_type') = 'invoice'"));
+    }
+
+    @Test
+    void emailReferenceLinksToTheInvoiceFile() throws Exception {
+        long payment = documentOf("Mail/2024-03-01 payment.eml");
+        long invoice = documentOf("Sales/Invoices/HR-1041.pdf");
+        assertEquals(1, Db.number(conn, "SELECT COUNT(*) FROM relations WHERE src = ? AND rel = 'REFERENCES' AND dst = ?", payment, invoice));
+        assertEquals(0, Db.number(conn, "SELECT COUNT(*) FROM entities WHERE etype = 'document' AND json_extract(attrs, '$.missing')"));
+    }
+
+    @Test
+    void partCodeWithAnUnknownPrefixIsAProduct() throws Exception {
+        // "Pick Cell PK-10" on HR-1041's line items
+        assertEquals(1, Db.number(conn, "SELECT COUNT(*) FROM entities WHERE etype = 'product' AND key = 'PK-10'"));
+        assertEquals(0, Db.number(conn, "SELECT COUNT(*) FROM entities WHERE etype = 'document' AND key = 'PK-10'"));
     }
 
     @Test

@@ -247,6 +247,7 @@ public class AnalysisApi {
                 result.put("read", out.read);
                 result.put("owner", out.owner.name);
                 result.put("owner_domain", out.owner.domain);
+                result.put("owner_reason", out.owner.reason);
                 result.put("profile", out.profile);
                 state = "done";
             }

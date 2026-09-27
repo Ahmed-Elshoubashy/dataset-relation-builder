@@ -11,6 +11,7 @@ import com.dubsof.graph.extract.parsers.CalendarParser;
 import com.dubsof.graph.extract.parsers.CalibrationParser;
 import com.dubsof.graph.extract.parsers.CertificateParser;
 import com.dubsof.graph.extract.parsers.ContractParser;
+import com.dubsof.graph.extract.parsers.DocumentNumbers;
 import com.dubsof.graph.extract.parsers.DrawingParser;
 import com.dubsof.graph.extract.parsers.EmailParser;
 import com.dubsof.graph.extract.parsers.FilenameDocument;
@@ -40,9 +41,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static com.dubsof.graph.extract.parsers.ParserUtils.PREFIX_TYPES;
 import static com.dubsof.graph.extract.parsers.ParserUtils.document;
-import static com.dubsof.graph.extract.parsers.ParserUtils.filenameDoc;
 import static com.dubsof.graph.extract.parsers.ParserUtils.refs;
 import static com.dubsof.graph.extract.parsers.ParserUtils.stem;
 
@@ -73,10 +72,9 @@ public class Extractor {
     private static final double FILENAME_PRODUCT_CONFIDENCE = 0.8;
     /** A file name starting with a product code: "GB-40_—_Datasheet_2", "HL-6200-2_manual". */
     private static final Pattern FILENAME_PRODUCT_CODE = Pattern.compile("^([A-Z]{2,4}-\\d{2,4})(?:-\\d+)?_");
-    /** ...unless the code is really a document number: "INV-8002_Acme Corporation". */
-    private static final Pattern FILENAME_DOCUMENT_NUMBER = Pattern.compile("^(INV|QUO|PO|DN|DWG|CAL)-");
-
     private final Dataset dataset;
+    /** Document numbers, with the prefixes this dataset's labelled numbers use (learned in extractAll). */
+    private final DocumentNumbers documentNumbers;
     private final FilesDao filesDao = new FilesDao();
     private final MentionsDao mentionsDao = new MentionsDao();
     private final FactsDao factsDao = new FactsDao();
@@ -107,6 +105,7 @@ public class Extractor {
     public Extractor(Dataset dataset, LlmParser freeText) {
         this.dataset = dataset;
         this.freeText = freeText;
+        this.documentNumbers = dataset.profile.documentNumbers();
     }
 
     /** Offline: the general extractor uses its rules. */
@@ -156,6 +155,7 @@ public class Extractor {
     /** Steps 1-6: the folder, the templates, the file name and the references. */
     private TemplateResult extractWithTemplates(FileRow row) {
         Extraction ex = new Extraction(row.id, dataset);
+        ex.documentNumbers = documentNumbers;
         String text = row.text == null ? "" : row.text;
         String stem = stem(row.path);
 
@@ -246,7 +246,7 @@ public class Extractor {
      * with no document number in its name and no text, which has nothing to say.
      */
     private void addDocumentFromFilename(Extraction ex, FileRow row, String text, String stem) {
-        FilenameDocument fromName = filenameDoc(stem);
+        FilenameDocument fromName = documentNumbers.fromFilename(stem);
         if (row.status != FileStatus.OK || fromName.number != null || !Text.isBlank(text)) {
             document(ex, row, fromName.docType, fromName.number, fromName.number != null ? fromName.number : stem,
                     "unread", row.status == FileStatus.OK ? null : Boolean.TRUE);
@@ -259,18 +259,18 @@ public class Extractor {
      * ("GB-40_—_Datasheet_2") is the product the document DESCRIBES.
      */
     private void addFilenameHints(Extraction ex, String stem) {
-        String filenameCompany = filenameDoc(stem).company;
+        String filenameCompany = documentNumbers.fromFilename(stem).company;
         if (filenameCompany != null) {
             Integer company = ex.addMentionWithConfidence(EntityType.COMPANY, filenameCompany, MentionRole.FILENAME,
                     FILENAME_COMPANY_CONFIDENCE, "truncated", Boolean.TRUE);
-            boolean isBusinessDocument = PREFIX_TYPES.containsValue(ex.docMention().attrs.get("doc_type"));
+            boolean isBusinessDocument = documentNumbers.isNumberedType(ex.docMention().attrs.get("doc_type"));
             if (isBusinessDocument) {
                 ex.fact(ex.doc, RelationType.ISSUED_TO, company);
             }
         }
 
         Matcher productCode = FILENAME_PRODUCT_CODE.matcher(stem);
-        if (productCode.lookingAt() && !FILENAME_DOCUMENT_NUMBER.matcher(stem).lookingAt()) {
+        if (productCode.lookingAt() && documentNumbers.fromFilename(stem).number == null) {
             String code = productCode.group(1);
             Integer product = ex.addMentionWithConfidence(EntityType.PRODUCT, code, MentionRole.FILENAME,
                     FILENAME_PRODUCT_CONFIDENCE, "code", code);
@@ -313,6 +313,13 @@ public class Extractor {
         Map<Long, Long> documentMentionOfFile = new HashMap<>();   // file id -> database id of its document mention
         int mentionCount = 0;
         int factCount = 0;
+
+        // The prefixes of labelled numbers ("Invoice No: HR-1042") first, so HR-1043 is a document everywhere.
+        for (FileRow file : files) {
+            if (file.text != null) {
+                documentNumbers.learn(file.text);
+            }
+        }
 
         // Templates first, for every file; then the general extractor, so Claude gets all its files at once.
         List<TemplateResult> results = new ArrayList<>();

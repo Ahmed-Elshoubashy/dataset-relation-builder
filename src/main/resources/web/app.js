@@ -425,7 +425,8 @@ function renderJob(job) {
   if (job.state === "done") {
     const e = job.result?.entities || {};
     const total = Object.values(e).reduce((a, b) => a + b, 0);
-    const owner = (job.result?.owner ? ` Owner: ${job.result.owner}.` : " No owner organisation was found.")
+    const why = job.result?.owner_reason ? ` (${job.result.owner_reason})` : "";
+    const owner = (job.result?.owner ? ` Owner: ${job.result.owner}${why}.` : ` No owner organisation was found${why}.`)
       + (job.result?.profile ? ` Profile: ${job.result.profile.split("/").pop()}.` : "");
     $("#an-detail").textContent = `Analysis complete: ${total.toLocaleString()} entities (${TYPES.map((t) => `${e[t.key] || 0} ${t.label.toLowerCase()}`).join(", ")}).${owner}`;
   } else if (failed) {

@@ -44,8 +44,10 @@ Nothing in the code is tied to one dataset. What a dataset has of its own goes i
     "folderPatterns": ["Clients/{company}/{job_id:P-\\d+} {title}/**"],
     "jobIdPattern": "P-\\d+",
     "owner": null,
+    "ownerDomain": null,
     "genericEmailDomains": ["gmail.com", "outlook.com"],
-    "legalSuffixes": ["ltd", "inc", "gmbh"]
+    "legalSuffixes": ["ltd", "inc", "gmbh"],
+    "documentPrefixes": {"HR": "invoice", "RFQ": "request_for_quote"}
   }
   ```
 
@@ -54,10 +56,23 @@ Nothing in the code is tied to one dataset. What a dataset has of its own goes i
   With no pattern, files get no folder hints and everything else still runs. `jobIdPattern` defaults
   to the regex of the first `{job_id:...}`. Without a profile, broad default lists of free e-mail
   providers and legal suffixes (Ltd, Inc, GmbH, SA, BV, SRL, Pty, ...) are used.
-- **Owner.** Found from the files: PDF letterheads, then the e-mail domain on the most e-mails (as
-  sender or recipient), then the most named organisation. It can be set in the "Analyse dataset" dialog, with `ERKG_OWNER` /
-  `ERKG_OWNER_DOMAIN`, or with `owner` in the profile. If nothing is found there is no owner, and
-  the graph is built without one.
+- **Document numbers** identify documents (`extract.parsers.DocumentNumbers` is the one place that knows them).
+  A number after a label is read in any format ("Invoice No: HR-1042", "PO Number: PO-3038",
+  "Ref: QUO-5236"), and the label gives its type. Without a label, a code only counts when its prefix
+  is known: the defaults (INV, QUO, PO, DN, DWG, CAL, ...), the profile's `documentPrefixes`, or a
+  prefix seen after a typed label anywhere in the dataset ("Invoice No: HR-1040" teaches that HR is an
+  invoice, so `HR-1043.pdf` and "HR-1041" in an e-mail are the same documents). An unknown prefix
+  ("PK-10") stays a possible part number. A document with no number is keyed by its file.
+- **Owner.** First found wins: the owner typed in the "Analyse dataset" dialog; `owner` in the dataset's
+  own `profile.json`; `ERKG_OWNER`; `owner` in a chosen, `ERKG_PROFILE` or suggested profile; detection.
+  A given owner keeps a domain only if it goes with it (`ERKG_OWNER_DOMAIN` with `ERKG_OWNER`,
+  `ownerDomain` with the profile's `owner`, else the detected domain if it matches the name).
+  Detection needs structural evidence: a letterhead on 5+ PDFs (and 10% of them), or a company e-mail
+  domain on 5+ e-mails and 30% of those with a company domain (as sender or recipient). With a domain
+  but no letterhead, the owner is the most named organisation that matches the domain; if the letterhead
+  and the domain disagree, the domain is dropped. Otherwise there is no owner, and the graph is built
+  without one. The analysis log says why ("letterhead on 1307 PDFs; domain on 100% of e-mails (323)",
+  or "no letterhead on 5+ PDFs, no domain on 5+ e-mails ...").
 - **General extractor.** Files no template parser recognises, and free text (e-mail bodies, letters,
   notes), go through a last extractor. With **"Also let Claude read the files no template recognises"**
   ticked in the dialog and an API key, Claude returns the entities and relations as JSON (role `llm`,

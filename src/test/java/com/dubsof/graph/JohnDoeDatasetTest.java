@@ -79,6 +79,14 @@ class JohnDoeDatasetTest {
         assertEquals(0, unresolvedCompanyMentions(withProfile));
     }
 
+    @Test
+    void theOwnerIsDetectedEitherWay() throws Exception {
+        for (Connection conn : new Connection[] {withProfile, withoutProfile}) {
+            assertEquals("Meridian Packaging Systems Ltd|meridianpackaging.co.uk", Db.first(conn, "SELECT name || '|' || json_extract(attrs, '$.domain')"
+                    + " FROM entities WHERE json_extract(attrs, '$.role') = 'owner'", rs -> rs.getString(1)));
+        }
+    }
+
     // ---------------------------------------------------------------- with no profile
 
     @Test

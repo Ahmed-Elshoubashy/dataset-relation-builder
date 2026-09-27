@@ -8,9 +8,7 @@ import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.util.Text;
 
 import java.util.List;
-import java.util.regex.Matcher;
 
-import static com.dubsof.graph.extract.parsers.ParserUtils.PRODUCT_CODE;
 import static com.dubsof.graph.extract.parsers.ParserUtils.document;
 import static com.dubsof.graph.extract.parsers.ParserUtils.stem;
 
@@ -30,9 +28,9 @@ public class ItemListParser implements Parser {
         Integer doc = document(ex, row, type, null, stem(row.path).replace("_", " "));
         for (String l : lines.subList(1, lines.size())) {
             String cell = l.split("\\s*[|,]\\s*")[0];
-            Matcher m = PRODUCT_CODE.matcher(cell);
-            if (m.find()) {
-                ex.fact(doc, RelationType.LISTS_PRODUCT, ex.addMention(EntityType.PRODUCT, cell, MentionRole.LINE_ITEM, "code", m.group(1)));
+            String code = ex.documentNumbers.productCode(cell);
+            if (code != null) {
+                ex.fact(doc, RelationType.LISTS_PRODUCT, ex.addMention(EntityType.PRODUCT, cell, MentionRole.LINE_ITEM, "code", code));
             }
         }
         return true;

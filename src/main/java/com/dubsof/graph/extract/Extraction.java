@@ -1,6 +1,7 @@
 package com.dubsof.graph.extract;
 
 import com.dubsof.graph.dataset.Dataset;
+import com.dubsof.graph.extract.parsers.DocumentNumbers;
 import com.dubsof.graph.util.Text;
 
 import java.util.ArrayList;
@@ -51,10 +52,13 @@ public class Extraction {
 
     /** The dataset being analysed: parsers read the owner from it. */
     public final Dataset dataset;
+    /** Recognises document numbers; the Extractor gives every file one that learned the dataset's prefixes. */
+    public DocumentNumbers documentNumbers;
 
     public Extraction(long fileId, Dataset dataset) {
         this.fileId = fileId;
         this.dataset = dataset;
+        this.documentNumbers = dataset.profile.documentNumbers();
     }
 
     /** An extraction for a dataset with no known owner. */

@@ -16,12 +16,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static com.dubsof.graph.extract.parsers.ParserUtils.DATE;
-import static com.dubsof.graph.extract.parsers.ParserUtils.PRODUCT_CODE;
 import static com.dubsof.graph.extract.parsers.ParserUtils.document;
 import static com.dubsof.graph.extract.parsers.ParserUtils.field;
 import static com.dubsof.graph.extract.parsers.ParserUtils.personWithOrg;
 import static com.dubsof.graph.extract.parsers.ParserUtils.stem;
-import static com.dubsof.graph.extract.parsers.ParserUtils.filenameDoc;
 import static com.dubsof.graph.extract.parsers.ParserUtils.join;
 
 /** Invoices, quotations, purchase orders and delivery notes: number, bill-to company, line items and totals. */
@@ -53,16 +51,21 @@ public class BusinessDocParser implements Parser {
                 }
             }
         }
-        String number = field(text, "No", "((?:INV|QUO|PO|DN)-\\d+)");
+        // "No: INV-8034", "Invoice No: HR-1042": any code under a heading; without one, only a number whose
+        // prefix is one of these document types ("Drawing No: DWG-4889" is left to the drawing parser)
+        String number = field(text, "No", "([A-Z]{2,5}-\\d+)");
+        if (number != null && header == null && !DOC_TYPES.containsValue(ex.documentNumbers.typeOf(number))) {
+            number = null;
+        }
         if (header == null && number == null) {
             return false;
         }
-        FilenameDocument fromName = filenameDoc(stem(row.path));
+        FilenameDocument fromName = ex.documentNumbers.fromFilename(stem(row.path));
         String key = number != null ? number : fromName.number;
-        String docType = header != null ? header : fromName.docType;
+        String docType = header != null ? header : number != null ? ex.documentNumbers.typeOf(number) : fromName.docType;
         String date = field(text, "Date", "(" + DATE + ")");
         String job = field(text, "Job", "(.+)");
-        String quoteRef = field(text, "Quote Ref", "(QUO-\\d+)");
+        String quoteRef = field(text, "Quote Ref", "([A-Z]{2,5}-\\d+)");
 
         List<String> cleaned = new ArrayList<String>();
         for (String l : rawLines) {
@@ -132,9 +135,9 @@ public class BusinessDocParser implements Parser {
             ex.fact(doc, RelationType.REFERENCES, ex.addMention(EntityType.DOCUMENT, quoteRef, MentionRole.REFERENCE, "key", quoteRef, "doc_type", "quote"));
         }
         for (Map<String, Object> it : items) {
-            Matcher code = PRODUCT_CODE.matcher((String) it.get("desc"));
-            if (code.find()) {
-                ex.fact(doc, RelationType.LISTS_PRODUCT, ex.addMention(EntityType.PRODUCT, (String) it.get("desc"), MentionRole.LINE_ITEM, "code", code.group(1)));
+            String code = ex.documentNumbers.productCode((String) it.get("desc"));
+            if (code != null) {
+                ex.fact(doc, RelationType.LISTS_PRODUCT, ex.addMention(EntityType.PRODUCT, (String) it.get("desc"), MentionRole.LINE_ITEM, "code", code));
             }
         }
         return true;

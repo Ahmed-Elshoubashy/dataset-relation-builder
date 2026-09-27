@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -91,12 +92,27 @@ class ProfileTest {
     void datasetsOwnProfileWinsOverTheDialogChoice(@TempDir Path dir) throws Exception {
         File own = dir.resolve("profile.json").toFile();
         Files.write(own.toPath(), "{\"folderPatterns\": [\"Clients/{company}/**\"]}".getBytes("UTF-8"));
-        assertEquals(own.getPath(), Profile.forDataset(dir.toFile(), "john-doe.json").source);
+        Profile profile = Profile.forDataset(dir.toFile(), "john-doe.json");
+        assertEquals(own.getPath(), profile.source);
+        assertTrue(profile.fromDataset);
+    }
+
+    @Test
+    void ownerDomainAndDocumentPrefixesAreRead(@TempDir Path dir) throws Exception {
+        File file = dir.resolve("p.json").toFile();
+        Files.write(file.toPath(), ("{\"owner\": \"Harbor Robotics Inc\", \"ownerDomain\": \"HarborRobotics.com\","
+                + " \"documentPrefixes\": {\"hr\": \"invoice\"}}").getBytes("UTF-8"));
+        Profile profile = Profile.read(file);
+        assertEquals("harborrobotics.com", profile.ownerDomain);
+        assertEquals("invoice", profile.documentNumbers().typeOf("HR-1042"));
+        assertFalse(profile.fromDataset);
     }
 
     @Test
     void dialogChoiceIsUsedWithoutAProfileInTheDataset(@TempDir Path dir) throws Exception {
-        assertTrue(Profile.forDataset(dir.toFile(), "john-doe.json").source.endsWith("john-doe.json"));
+        Profile chosen = Profile.forDataset(dir.toFile(), "john-doe.json");
+        assertTrue(chosen.source.endsWith("john-doe.json"));
+        assertFalse(chosen.fromDataset);
         assertEquals("defaults", Profile.forDataset(dir.toFile(), Profile.NONE).source);
     }
 

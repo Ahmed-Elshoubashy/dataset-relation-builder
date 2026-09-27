@@ -27,15 +27,12 @@ final class FreeTextRules {
             "^(?:Yours faithfully|Yours sincerely|Kind regards|Best regards|Warm regards|Regards|Many thanks|Thanks"
                     + "|Thank you|Best|Cheers|Sincerely|Mit freundlichen Grüßen|Viele Grüße|Beste Grüße|Cordialement"
                     + "|Saludos|Met vriendelijke groet)[,.!]?$", Pattern.CASE_INSENSITIVE);
-    private static final Pattern DOCUMENT_NUMBER = Pattern.compile(
-            "(?i:\\b(?:invoice|order|quote|quotation|contract|ref|reference|po|so|delivery note|credit note))"
-                    + "\\s*(?i:no\\.?|number|nr\\.?|#)?\\s*[:#]?\\s*\\b([A-Z]{2,5}-\\d{2,}(?:-\\d+)*)\\b");
     private static final Pattern EMAIL = Pattern.compile("[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+");
 
     private FreeTextRules() {
     }
 
-    static TextFindings find(String text, NameMatcher names) {
+    static TextFindings find(String text, NameMatcher names, DocumentNumbers documentNumbers) {
         TextFindings found = new TextFindings();
 
         for (Matcher m = ADDRESS_LINE.matcher(text); m.find(); ) {
@@ -79,8 +76,8 @@ final class FreeTextRules {
         for (String company : names.findCompanyNames(text)) {
             found.add(EntityType.COMPANY, company, null, null, null);
         }
-        for (Matcher m = DOCUMENT_NUMBER.matcher(text); m.find(); ) {
-            found.add(EntityType.DOCUMENT, m.group(1), null, null, null);
+        for (DocumentNumbers.Found number : documentNumbers.labelled(text)) {
+            found.add(EntityType.DOCUMENT, number.number, null, null, null);
         }
         return found;
     }

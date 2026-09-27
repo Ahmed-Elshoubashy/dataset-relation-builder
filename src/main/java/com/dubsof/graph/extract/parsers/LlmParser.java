@@ -37,7 +37,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static com.dubsof.graph.extract.parsers.ParserUtils.PREFIX_TYPES;
 import static com.dubsof.graph.extract.parsers.ParserUtils.cleanPerson;
 import static com.dubsof.graph.extract.parsers.ParserUtils.companyFromDomain;
 import static com.dubsof.graph.extract.parsers.ParserUtils.owner;
@@ -161,7 +160,7 @@ public class LlmParser implements Parser, AutoCloseable {
             }
         }
         if (found == null) {   // offline, or Claude could not answer
-            found = FreeTextRules.find(text, ex.dataset.names);
+            found = FreeTextRules.find(text, ex.dataset.names, ex.documentNumbers);
         }
         addFindings(ex, found, role, confidence, folderCompany);
         return true;
@@ -203,9 +202,8 @@ public class LlmParser implements Parser, AutoCloseable {
                 if (isThisOrKnownDocument(ex, entity.name)) {
                     continue;
                 }
-                String prefix = entity.name.contains("-") ? entity.name.substring(0, entity.name.indexOf('-')) : null;
                 mention = ex.addMentionWithConfidence(EntityType.DOCUMENT, entity.name, role, confidence,
-                        "key", entity.name, "doc_type", prefix == null ? null : PREFIX_TYPES.get(prefix));
+                        "key", entity.name, "doc_type", ex.documentNumbers.typeOf(entity.name));
                 ex.fact(ex.doc, RelationType.REFERENCES, mention);
             } else if (entity.type == EntityType.PROJECT) {
                 mention = ex.addMentionWithConfidence(EntityType.PROJECT, entity.name, role, confidence, "company_mention", folderCompany);

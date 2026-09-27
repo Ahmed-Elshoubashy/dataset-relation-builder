@@ -15,10 +15,17 @@ public final class Owner {
     public final String name;
     /** Its main e-mail domain ("harborrobotics.com"), or null. */
     public final String domain;
+    /** Where it came from, for the analysis log: "letterhead on 212 PDFs; ...", "from the Analyse dialog"; or why there is none. */
+    public final String reason;
 
     public Owner(String name, String domain) {
+        this(name, domain, null);
+    }
+
+    public Owner(String name, String domain, String reason) {
         this.name = name;
         this.domain = domain;
+        this.reason = reason;
     }
 
     public boolean isKnown() {

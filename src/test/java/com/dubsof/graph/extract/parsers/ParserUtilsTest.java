@@ -9,30 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ParserUtilsTest {
 
-    @Test
-    void numberedFileName() {
-        FilenameDocument doc = ParserUtils.filenameDoc("INV-8002_Acme Corporation");
-        assertEquals("INV-8002", doc.number);
-        assertEquals("invoice", doc.docType);
-        assertEquals("Acme Corporation", doc.company);
-    }
-
-    @Test
-    void versionWordsAreNotACompany() {
-        assertNull(ParserUtils.filenameDoc("QUO-5238_v2").company);
-        assertNull(ParserUtils.filenameDoc("DWG-9296_RevB").company);
-        assertNull(ParserUtils.filenameDoc("INV-8034 FINAL").company);
-        assertEquals("quote", ParserUtils.filenameDoc("QUO-5238_v2").docType);
-    }
-
-    @Test
-    void unnumberedFileNameIsAllNull() {
-        FilenameDocument doc = ParserUtils.filenameDoc("meeting notes march");
-        assertNull(doc.number);
-        assertNull(doc.docType);
-        assertNull(doc.company);
-    }
-
     @ParameterizedTest
     @CsvSource(delimiter = '|', value = {
         "Customers/Acme Corporation/Invoices/INV-8034_Acme Corporation.pdf | INV-8034_Acme Corporation",
