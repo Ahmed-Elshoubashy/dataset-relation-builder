@@ -4,7 +4,7 @@ services:
     image: entity-graph-resolver
     ports:
       # localhost only: the API has no login and accepts an Anthropic key.
-      # 8766 by default so it can run next to the Python version on 8765.
+      # 8766 by default.
       - "127.0.0.1:${PORT:-8766}:8765"
     environment:
       # the dataset picker browses this laptop folder (default: your home folder)
@@ -13,7 +13,8 @@ services:
       ERKG_DATA_ROOT: ${DATASET:-${DATASETS_DIR:-${HOME}}}
       # optional; otherwise enter the key in the "Analyse dataset" dialog
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # optional dataset profile, e.g. /opt/app/profiles/john-doe.json (see README "Other datasets")
+      # optional default profile, e.g. /opt/app/profiles/john-doe.json; a dataset's own profile.json and the
+      # dialog's choice come first (see README "Other datasets")
       ERKG_PROFILE: ${ERKG_PROFILE:-}
     volumes:
       # mounted read-only at the SAME path it has on the laptop, so the picker shows real paths

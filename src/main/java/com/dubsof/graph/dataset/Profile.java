@@ -7,15 +7,18 @@ import com.dubsof.graph.util.Json;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
- * The conventions of one dataset, from an optional profile.json (in the dataset's root folder, or the
- * file named by ERKG_PROFILE). Everything is optional; without a file the defaults below are used:
+ * The conventions of one dataset, from an optional profile file (see {@link #forDataset} for where it
+ * comes from). Everything is optional; without a file the defaults below are used:
  * no folder layout (files simply get no folder hints), no job id format, broad lists of legal suffixes
  * and free e-mail providers.
  * <pre>
@@ -66,13 +69,100 @@ public final class Profile {
                 new NameMatcher(DEFAULT_LEGAL_SUFFIXES, DEFAULT_GENERIC_DOMAINS));
     }
 
-    /** The profile for a dataset: ERKG_PROFILE if set, else profile.json in the dataset root, else the defaults. */
-    public static Profile forDataset(File dataRoot) throws IOException {
+    /** The dialog's choice for "no profile, only the defaults". */
+    public static final String NONE = "none";
+    /** A shipped profile is suggested when its folder patterns match at least this share of the dataset's files. */
+    private static final double SUGGEST_MIN_SHARE = 0.3;
+
+    /**
+     * The profile for a dataset, first found wins:
+     * <ol>
+     *   <li>profile.json in the dataset's root: the dataset's own conventions always win;</li>
+     *   <li>the profile chosen in the Analyse dialog ({@code chosen}: a name from {@link #available()}, or "none");</li>
+     *   <li>ERKG_PROFILE, the server's default;</li>
+     *   <li>a shipped profile whose folder patterns match most of the dataset's paths (john-doe's layout
+     *       is recognised without setting anything);</li>
+     *   <li>the defaults.</li>
+     * </ol>
+     *
+     * @param chosen null or "" when nothing was chosen
+     */
+    public static Profile forDataset(File dataRoot, String chosen) throws IOException {
+        File inRoot = new File(dataRoot, "profile.json");
+        if (inRoot.isFile()) {
+            return read(inRoot);
+        }
+        if (chosen != null && !chosen.isEmpty()) {
+            if (chosen.equals(NONE)) {
+                return defaults();
+            }
+            if (!available().contains(chosen)) {
+                throw new IllegalArgumentException("Unknown profile: " + chosen);
+            }
+            return read(new File(Config.PROFILES_DIR, chosen));
+        }
         if (Config.PROFILE != null) {
             return read(new File(Config.PROFILE));
         }
-        File inRoot = new File(dataRoot, "profile.json");
-        return inRoot.isFile() ? read(inRoot) : defaults();
+        Profile suggested = suggest(dataRoot);
+        return suggested != null ? suggested : defaults();
+    }
+
+    /** The shipped profiles ("john-doe.json", ...), sorted; empty when there is no profiles folder. */
+    public static List<String> available() {
+        List<String> names = new ArrayList<>();
+        File[] files = Config.PROFILES_DIR.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (file.isFile() && file.getName().endsWith(".json")) {
+                    names.add(file.getName());
+                }
+            }
+        }
+        Collections.sort(names);
+        return names;
+    }
+
+    /**
+     * The shipped profile whose folder patterns match the largest share of the dataset's file paths,
+     * if that share is at least 30%; null otherwise. Only reads the folder listing, not the files.
+     */
+    static Profile suggest(File dataRoot) throws IOException {
+        List<String> paths = relativePaths(dataRoot);
+        Profile best = null;
+        double bestShare = SUGGEST_MIN_SHARE;
+        for (String name : available()) {
+            Profile profile = read(new File(Config.PROFILES_DIR, name));
+            if (profile.folderPatterns.isEmpty() || paths.isEmpty()) {
+                continue;
+            }
+            int matching = 0;
+            for (String path : paths) {
+                if (profile.matchingPattern(path) != null) {
+                    matching++;
+                }
+            }
+            double share = matching / (double) paths.size();
+            if (share >= bestShare) {
+                best = new Profile(profile.source + String.format(" (suggested: its folders match %.0f%% of the files)", share * 100),
+                        profile.folderPatterns, profile.jobIdPattern, profile.owner, profile.names);
+                bestShare = share;
+            }
+        }
+        return best;
+    }
+
+    /** Every file under the root, as "a/b/c.pdf" relative to it. */
+    private static List<String> relativePaths(File dataRoot) throws IOException {
+        final Path root = dataRoot.toPath();
+        final List<String> paths = new ArrayList<>();
+        if (!dataRoot.isDirectory()) {
+            return paths;
+        }
+        try (Stream<Path> files = Files.walk(root)) {
+            files.filter(Files::isRegularFile).forEach(file -> paths.add(root.relativize(file).toString().replace(File.separatorChar, '/')));
+        }
+        return paths;
     }
 
     @SuppressWarnings("unchecked")
@@ -104,17 +194,26 @@ public final class Profile {
      */
     public FolderContext folderContext(String path) {
         String[] parts = path.split("/");
-        for (FolderPattern pattern : folderPatterns) {
-            FolderContext ctx = pattern.match(path);
-            if (ctx != null) {
-                ctx.area = parts[0];
-                return ctx;
-            }
+        FolderContext ctx = matchingPattern(path);
+        if (ctx != null) {
+            ctx.area = parts[0];
+            return ctx;
         }
-        FolderContext ctx = new FolderContext();
+        ctx = new FolderContext();
         ctx.area = parts.length > 1 ? parts[0] : null;
         ctx.category = parts.length > 2 ? parts[1] : null;
         return ctx;
+    }
+
+    /** What the first matching folder pattern reads from the path, or null when none matches. */
+    private FolderContext matchingPattern(String path) {
+        for (FolderPattern pattern : folderPatterns) {
+            FolderContext ctx = pattern.match(path);
+            if (ctx != null) {
+                return ctx;
+            }
+        }
+        return null;
     }
 
     private static List<?> list(Object value, List<?> fallback) {

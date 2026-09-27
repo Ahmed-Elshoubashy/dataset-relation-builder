@@ -27,6 +27,7 @@ WORKDIR /app
 # compose.yaml mounts a laptop folder at its own path and sets ERKG_BROWSE_ROOT / ERKG_DATA_ROOT;
 # the graph, OCR cache and extracted archive members live in /app/data.
 ENV ERKG_WORK_DIR=/app/data \
+    ERKG_PROFILES_DIR=/opt/app/profiles \
     PORT=8765
 VOLUME /app/data
 EXPOSE 8765

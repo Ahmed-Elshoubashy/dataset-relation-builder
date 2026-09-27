@@ -82,6 +82,8 @@ public class Resolver {
     private final Map<String, Integer> methodCounts = new TreeMap<>();
     /** The owner and the customer-folder companies: certain, so they win ties when matching. */
     private final Set<Long> anchorCompanyIds = new HashSet<>();
+    /** Companies known only by an e-mail domain ("kestrelfoods.com"): no name matched it when it was seen. */
+    private final Set<Long> domainCompanyIds = new HashSet<>();
     /** The owner company's entity id; 0 (no entity has it) when the dataset has no known owner. */
     private long ownerCompanyId;
 
@@ -224,6 +226,157 @@ public class Resolver {
             // a weak source (e.g. filename, 0.7) lowers the confidence of even a perfect name match
             assignEntity(mention, decision.companyId, decision.method, decision.score * mention.confidence);
         }
+
+        // 4. Step 3 is greedy: the first spelling seen names a new company, even a typo ("Kestral Foods Inc"),
+        //    and a domain or a longer name seen before its company's right spelling could not join it.
+        //    Now that every spelling is known, fix both: rename, merge what matches, and rename the merged ones.
+        nameCompaniesByBestSpelling(knownCompanies);
+        mergeSameCompanies(knownCompanies);
+        nameCompaniesByBestSpelling(knownCompanies);
+    }
+
+    /**
+     * Renames every company that is not an anchor after the spelling its other spellings agree with most,
+     * so a typo seen first ("Kestral Foods Inc") does not name the company. Each spelling is scored by how
+     * well every mention of the company matches it (see {@link NameMatcher#supportsName}); counting exact
+     * spellings is not enough when a name is written many ways ("Witmore Dairy" can be the single most
+     * common one). Filenames (often cut off) and e-mail domains never name a company. The key stays as it was.
+     */
+    private void nameCompaniesByBestSpelling(Map<Long, String> knownCompanies) throws Exception {
+        for (Map.Entry<Long, List<MentionRow>> company : mentionsByCompany().entrySet()) {
+            long companyId = company.getKey();
+            if (anchorCompanyIds.contains(companyId)) {
+                continue;
+            }
+            // spelling -> number of mentions, in the order first seen (ties keep the first)
+            Map<String, Integer> spellings = new LinkedHashMap<>();
+            for (MentionRow mention : company.getValue()) {
+                if (mention.role != MentionRole.EMAIL_DOMAIN && mention.role != MentionRole.FILENAME) {
+                    spellings.merge(mention.surface, 1, Integer::sum);
+                }
+            }
+            String best = null;
+            double bestSupport = 0;
+            for (String name : spellings.keySet()) {
+                double support = 0;
+                for (Map.Entry<String, Integer> spelling : spellings.entrySet()) {
+                    support += spelling.getValue() * names.supportsName(spelling.getKey(), name);
+                }
+                // spellings that differ only in punctuation or legal suffix tie: the more frequent one wins
+                boolean tie = Math.abs(support - bestSupport) < 1e-9;
+                if ((support > bestSupport && !tie) || (tie && best != null && spellings.get(name) > spellings.get(best))) {
+                    best = name;
+                    bestSupport = support;
+                }
+            }
+            if (best != null && !best.equals(knownCompanies.get(companyId))) {
+                entitiesDao.updateName(conn, companyId, best);
+                knownCompanies.put(companyId, best);
+            }
+        }
+    }
+
+    /**
+     * Merges companies that step 3 kept apart only because of the order it saw them in: "Bayview Dental"
+     * was created before "Bayview Dental Supplies Inc" came along, and kestrelfoods.com before its company
+     * had the right name. Every company that is not an anchor is compared with every other one, both ways
+     * and domains with names, and a pair scoring ACCEPT or more becomes one company. The anchor is kept,
+     * else the named company over a domain, else the one with more mentions. Borderline pairs (GRAY..ACCEPT)
+     * stay apart. This is O(n²) in companies, which number in the tens or hundreds, so it is cheap.
+     */
+    private void mergeSameCompanies(Map<Long, String> knownCompanies) throws Exception {
+        Map<Long, List<MentionRow>> mentionsByCompany = mentionsByCompany();
+        boolean mergedOne = true;
+        while (mergedOne) {
+            mergedOne = false;
+            for (Long companyId : new ArrayList<>(knownCompanies.keySet())) {
+                if (anchorCompanyIds.contains(companyId)) {
+                    continue;
+                }
+                for (Long otherId : new ArrayList<>(knownCompanies.keySet())) {
+                    Match match = otherId.equals(companyId) ? null : sameCompany(companyId, otherId, knownCompanies);
+                    if (match == null || match.score < ACCEPT) {
+                        continue;
+                    }
+                    long kept = keptCompany(companyId, otherId, mentionsByCompany);
+                    long gone = kept == companyId ? otherId : companyId;
+                    mergeCompany(gone, kept, match, mentionsByCompany, knownCompanies);
+                    mergedOne = true;
+                    break;
+                }
+                if (mergedOne) {
+                    break;   // the company list changed: start again
+                }
+            }
+        }
+    }
+
+    /** How well two companies match, trying both directions (a longer name only matches one way); null: not at all. */
+    private Match sameCompany(long companyId, long otherId, Map<Long, String> knownCompanies) {
+        String name = knownCompanies.get(companyId);
+        String otherName = knownCompanies.get(otherId);
+        boolean isDomain = domainCompanyIds.contains(companyId);
+        boolean otherIsDomain = domainCompanyIds.contains(otherId);
+        if (isDomain && otherIsDomain) {
+            return null;   // two different domains can belong to one company, but nothing here says so
+        }
+        if (isDomain || otherIsDomain) {
+            return isDomain ? names.matchDomain(name, otherName) : names.matchDomain(otherName, name);
+        }
+        Match oneWay = names.matchCompany(name, otherName, false);
+        Match otherWay = names.matchCompany(otherName, name, false);
+        if (oneWay == null || (otherWay != null && otherWay.score > oneWay.score)) {
+            return otherWay;
+        }
+        return oneWay;
+    }
+
+    /** Of two companies that are the same, the one to keep: an anchor, else a named one over a domain, else the one with more mentions. */
+    private long keptCompany(long companyId, long otherId, Map<Long, List<MentionRow>> mentionsByCompany) {
+        if (anchorCompanyIds.contains(otherId)) {
+            return otherId;
+        }
+        if (domainCompanyIds.contains(companyId) != domainCompanyIds.contains(otherId)) {
+            return domainCompanyIds.contains(companyId) ? otherId : companyId;
+        }
+        int mentions = mentionsByCompany.getOrDefault(companyId, new ArrayList<>()).size();
+        int otherMentions = mentionsByCompany.getOrDefault(otherId, new ArrayList<>()).size();
+        if (mentions != otherMentions) {
+            return mentions > otherMentions ? companyId : otherId;
+        }
+        return Math.min(companyId, otherId);
+    }
+
+    /** Moves the mentions of {@code gone} to {@code kept} (method "merged:rule") and deletes {@code gone}. */
+    private void mergeCompany(long gone, long kept, Match match, Map<Long, List<MentionRow>> mentionsByCompany,
+                              Map<Long, String> knownCompanies) throws Exception {
+        List<MentionRow> moved = mentionsByCompany.containsKey(gone) ? mentionsByCompany.remove(gone) : new ArrayList<>();
+        for (MentionRow mention : moved) {
+            countMethod(mention.etype, mention.method, -1);
+            assignEntity(mention, kept, "merged:" + match.methodName(), Math.min(mention.confidence, match.score));
+        }
+        mentionsByCompany.computeIfAbsent(kept, id -> new ArrayList<>()).addAll(moved);
+
+        // a merged domain tells the company's domain
+        EntityRow keptCompany = entitiesDao.findById(conn, kept);
+        if (domainCompanyIds.contains(gone) && keptCompany.attrs.get("domain") == null) {
+            keptCompany.attrs.put("domain", knownCompanies.get(gone));
+            entitiesDao.updateAttrs(conn, kept, keptCompany.attrs);
+        }
+        entitiesDao.delete(conn, gone);
+        knownCompanies.remove(gone);
+        domainCompanyIds.remove(gone);
+    }
+
+    /** Company id -> its mentions, in id order. */
+    private Map<Long, List<MentionRow>> mentionsByCompany() {
+        Map<Long, List<MentionRow>> byCompany = new LinkedHashMap<>();
+        for (MentionRow mention : mentionsOfType(EntityType.COMPANY)) {
+            if (mention.entityId != null) {
+                byCompany.computeIfAbsent(mention.entityId, id -> new ArrayList<>()).add(mention);
+            }
+        }
+        return byCompany;
     }
 
     /**
@@ -268,12 +421,31 @@ public class Resolver {
             }
         }
 
+        // "Ask Harbor Robotics Inc": the free-text rules may take a sentence's first word into a name.
+        // Without it, the name may be a known company.
+        String withoutFirstWord = NameMatcher.withoutFirstWord(mention.surface);
+        if (mention.role == MentionRole.FREE_TEXT && (best == null || best.score < GRAY) && withoutFirstWord != null) {
+            CompanyCandidate shorter = null;
+            for (Map.Entry<Long, String> known : knownCompanies.entrySet()) {
+                Match match = names.matchCompany(withoutFirstWord, known.getValue(), false);
+                if (match != null && match.score >= ACCEPT && (shorter == null || match.score > shorter.score)) {
+                    shorter = new CompanyCandidate(known.getKey(), match.score, match.methodName());
+                }
+            }
+            if (shorter != null) {
+                return new CompanyDecision(shorter.companyId, "leading_word+" + shorter.method, shorter.score * 0.9);
+            }
+        }
+
         // No match: a new organisation (supplier, certification body, unknown customer, ...).
         // It is added to knownCompanies, so later mentions can match it.
         String name = isDomain ? mention.surface.toLowerCase() : mention.surface;
         String key = isDomain ? "domain:" + name : names.companyKey(name);
         long companyId = findOrCreateEntity(EntityType.COMPANY, key, name, isDomain ? attributes("domain", name) : null);
         knownCompanies.put(companyId, name);
+        if (isDomain) {
+            domainCompanyIds.add(companyId);
+        }
         return new CompanyDecision(companyId, "new", 1.0);
     }
 
@@ -282,6 +454,7 @@ public class Resolver {
     /**
      * Gives every project mention its project. A job id (from the profile's format) identifies a project exactly;
      * a title alone ("Job: Shrink Wrap Retrofit") is matched to a folder project using the customer as context.
+     * A dataset without project folders gets its projects from titles seen in several files (step 3).
      */
     private void resolveProjects() throws Exception {
         // title key -> projects that have a folder with that title (one title can exist for two customers)
@@ -348,6 +521,7 @@ public class Resolver {
                 folderProjectOfFile.put(mention.fileId, mention.entityId);
             }
         }
+        List<MentionRow> withoutProject = new ArrayList<>();
         for (MentionRow mention : mentionsOfType(EntityType.PROJECT)) {
             if (mention.entityId != null) {
                 continue;   // already resolved by its JOB code in step 1
@@ -389,11 +563,78 @@ public class Resolver {
             }
 
             if (chosen == null) {
-                assignEntity(mention, null, "unresolved", 0);   // no candidate, or several and no context
+                withoutProject.add(mention);   // no candidate, or several and no context
                 continue;
             }
             assignEntity(mention, chosen, method, method.contains("company") ? 0.9 : 0.75);
         }
+
+        // Step 3: no folder defines a project (no folder pattern, or none that names projects).
+        // With project folders, a title that matches none of them stays unresolved: it is more likely
+        // a typo or a project filed elsewhere than a new project.
+        if (folderProjectsByTitle.isEmpty()) {
+            resolveTitleOnlyProjects(withoutProject);
+        } else {
+            for (MentionRow mention : withoutProject) {
+                assignEntity(mention, null, "unresolved", 0);
+            }
+        }
+    }
+
+    /**
+     * Projects of a dataset without project folders, from their titles ("Job: Conveyor Upgrade"). A title seen
+     * in at least 2 files for the same customer becomes a project, keyed by title and customer; a title seen
+     * once stays unresolved, as it may be a one-off description. A mention without a customer joins the project
+     * with its title when there is only one, or a customer-less project when its title is in 2+ files.
+     * Method "title_only", confidence 0.6: a title is weaker evidence than a folder or a job id.
+     */
+    private void resolveTitleOnlyProjects(List<MentionRow> mentions) throws Exception {
+        // "title key|customer id" ("title key|" without a customer) -> the files it appears in
+        Map<String, Set<Long>> filesByTitleAndCustomer = new LinkedHashMap<>();
+        for (MentionRow mention : mentions) {
+            filesByTitleAndCustomer.computeIfAbsent(titleAndCustomer(mention), group -> new HashSet<>()).add(mention.fileId);
+        }
+
+        // title key -> the projects created for it, one per customer
+        Map<String, List<Long>> projectsByTitle = new HashMap<>();
+        Map<String, Long> projectByTitleAndCustomer = new HashMap<>();
+        for (MentionRow mention : mentions) {
+            Long customerId = entityIdOfMention(mention.attrId("company_mention"));
+            String group = titleAndCustomer(mention);
+            if (customerId == null || filesByTitleAndCustomer.get(group).size() < 2 || projectByTitleAndCustomer.containsKey(group)) {
+                continue;
+            }
+            String customerKey = entitiesDao.findById(conn, customerId).key;
+            long projectId = findOrCreateEntity(EntityType.PROJECT, "title:" + titleKey(mention.surface) + "@" + customerKey,
+                    mention.surface, attributes("title", mention.surface, "company_id", customerId, "source", "title_only"));
+            projectByTitleAndCustomer.put(group, projectId);
+            projectsByTitle.computeIfAbsent(titleKey(mention.surface), title -> new ArrayList<>()).add(projectId);
+        }
+
+        for (MentionRow mention : mentions) {
+            Long projectId = projectByTitleAndCustomer.get(titleAndCustomer(mention));
+            boolean hasCustomer = entityIdOfMention(mention.attrId("company_mention")) != null;
+            List<Long> withThisTitle = projectsByTitle.getOrDefault(titleKey(mention.surface), new ArrayList<>());
+            if (projectId == null && !hasCustomer && withThisTitle.size() == 1) {
+                projectId = withThisTitle.get(0);
+            }
+            if (projectId == null && !hasCustomer && withThisTitle.isEmpty()
+                    && filesByTitleAndCustomer.get(titleAndCustomer(mention)).size() >= 2) {
+                projectId = findOrCreateEntity(EntityType.PROJECT, "title:" + titleKey(mention.surface), mention.surface,
+                        attributes("title", mention.surface, "source", "title_only"));
+            }
+            if (projectId == null) {
+                assignEntity(mention, null, "unresolved", 0);
+            } else {
+                assignEntity(mention, projectId, "title_only", 0.6);
+            }
+        }
+    }
+
+    /** "conveyor upgrade|42": a project title and the customer the document names (empty when none). */
+    private String titleAndCustomer(MentionRow mention) {
+        Long customerId = entityIdOfMention(mention.attrId("company_mention"));
+        return titleKey(mention.surface) + "|" + (customerId == null ? "" : customerId);
     }
 
     /** "Shrink Wrap Retrofit" -> "shrink wrap retrofit": lower case, punctuation as single spaces. */
@@ -427,6 +668,8 @@ public class Resolver {
         Map<Long, Long> customerOfFolder = customerOfFolderByFile();
         // "name key|organisation id" -> person
         Map<String, Long> personByNameAndOrg = new LinkedHashMap<>();
+        // the same with folded keys ("jose muller|42"), tried when the exact key finds no one
+        Map<String, Long> personByFoldedNameAndOrg = new HashMap<>();
         Map<String, Long> personByEmail = new HashMap<>();
         List<MentionRow> personMentions = mentionsOfType(EntityType.PERSON);
 
@@ -448,6 +691,9 @@ public class Resolver {
             if (personId == null) {
                 personId = personByNameAndOrg.get(nameKey + "|" + orgId);
             }
+            if (personId == null) {
+                personId = personByFoldedNameAndOrg.get(NameMatcher.personKeyFolded(nameKey) + "|" + orgId);
+            }
             String method = email != null && personByEmail.containsKey(email) ? "email" : "name+organisation";
             if (personId == null) {
                 personId = findOrCreateEntity(EntityType.PERSON, nameKey + "|" + orgId, mention.surface,
@@ -455,6 +701,7 @@ public class Resolver {
                 method = "new";
             }
             personByNameAndOrg.put(nameKey + "|" + orgId, personId);
+            personByFoldedNameAndOrg.putIfAbsent(NameMatcher.personKeyFolded(nameKey) + "|" + orgId, personId);
 
             // collect everything known about the person
             if (email != null) {
@@ -486,6 +733,14 @@ public class Resolver {
             }
             String nameKey = NameMatcher.personKey(mention.surface);
             Set<KnownPerson> candidates = peopleByName.containsKey(nameKey) ? peopleByName.get(nameKey) : new LinkedHashSet<>();
+            // "Jose Muller" for a known "José Müller": the same name with umlauts folded
+            if (candidates.isEmpty()) {
+                for (Map.Entry<String, Set<KnownPerson>> known : peopleByName.entrySet()) {
+                    if (NameMatcher.personKeyFolded(known.getKey()).equals(NameMatcher.personKeyFolded(nameKey))) {
+                        candidates.addAll(known.getValue());
+                    }
+                }
+            }
 
             // "R. Bianchi": compare the initial and surname with every known full name
             String[] initialAndSurname = NameMatcher.personInitialForm(mention.surface);
@@ -790,8 +1045,18 @@ public class Resolver {
         mention.entityId = entityId;
         mention.method = method;
         mention.confidence = confidence;
-        String countKey = mention.etype.value() + ":" + method;
-        methodCounts.put(countKey, methodCounts.containsKey(countKey) ? methodCounts.get(countKey) + 1 : 1);
+        countMethod(mention.etype, method, 1);
+    }
+
+    /** Adds {@code delta} to the stage summary's count of mentions of this type resolved by this method. */
+    private void countMethod(EntityType etype, String method, int delta) {
+        String countKey = etype.value() + ":" + method;
+        int count = methodCounts.getOrDefault(countKey, 0) + delta;
+        if (count == 0) {
+            methodCounts.remove(countKey);
+        } else {
+            methodCounts.put(countKey, count);
+        }
     }
 
     /** The mentions of one entity type, in id order. */

@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.util.Arrays;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -73,6 +75,33 @@ class NameMatcherTest {
 
     @ParameterizedTest
     @CsvSource(delimiter = '|', value = {
+        // the known name is the shorter one: either way round is a truncation
+        "Whitmore Dairy               | Whitmore Dairy Products Ltd",
+        "Whitmore Dairy Products Ltd  | Whitmore Dairy",
+        "Bayview Dental Supplies Inc  | Bayview Dental",
+    })
+    void truncationWorksBothWays(String mention, String candidate) {
+        Match match = NAMES.matchCompany(mention, candidate, false);
+        assertNotNull(match);
+        assertEquals("truncation", match.methodName());
+        assertTrue(match.score >= 0.8, match.toString());
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+        // one word is not enough to be sure: "Acme Robotics" is not simply more words about "Acme"
+        "Acme Robotics             | Acme",
+        // a different next word is a different company, whichever name is longer
+        "Redwood Timber Supplies   | Redwood Timber & Joinery",
+        "Redwood Joinery           | Redwood Timber",
+    })
+    void longerNameNeedsTheWholeShorterName(String mention, String candidate) {
+        Match match = NAMES.matchCompany(mention, candidate, false);
+        assertTrue(match == null || match.score < 0.8, String.valueOf(match));
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
         "acmecorp.com            | Acme Corporation",
         "ashcombeconfec.co.uk    | Ashcombe Confectionery Ltd",
         "falconaero.co.uk        | Falcon Aerospace Components Ltd",
@@ -124,5 +153,21 @@ class NameMatcherTest {
     void companyNamesInRunningText() {
         assertEquals(java.util.Arrays.asList("Mueller GmbH", "Harbor Robotics Inc"), NAMES.findCompanyNames(
                 "Spoke with José Müller from Mueller GmbH. Harbor Robotics Inc will quote the upgrade."));
+    }
+
+    @Test
+    void sentenceStartIsDroppedWhenTheRestIsNamedElsewhere() {
+        assertEquals(Arrays.asList("Harbor Robotics Inc", "Harbor Robotics Inc"),
+                NAMES.findCompanyNames("Ask Harbor Robotics Inc for a quote. We have worked with Harbor Robotics Inc before."));
+        // alone, the first word may be part of the name: kept
+        assertEquals(Arrays.asList("Harbor Robotics Inc"), NAMES.findCompanyNames("Harbor Robotics Inc will quote the cell."));
+        assertEquals(Arrays.asList("Ask Harbor Robotics Inc"), NAMES.findCompanyNames("Ask Harbor Robotics Inc for a quote."));
+    }
+
+    @Test
+    void foldedPersonKeysMatchEverySpellingOfAnUmlaut() {
+        String folded = NameMatcher.personKeyFolded(NameMatcher.personKey("José Müller"));
+        assertEquals(folded, NameMatcher.personKeyFolded(NameMatcher.personKey("Jose Mueller")));
+        assertEquals(folded, NameMatcher.personKeyFolded(NameMatcher.personKey("Jose Muller")));
     }
 }

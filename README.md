@@ -1,11 +1,8 @@
-# Entity Graph Resolver (Java)
+# Entity Graph Resolver
 
-Java 21 port of `documents-graph-builder`: finds every reference to a company, person, project,
-document or product across a file dump, decides which references are the same real-world thing,
-links them, and serves an explorer UI with the evidence behind every link.
-
-Same pipeline, same SQLite schema and same JSON API as the Python version, so the web UI
-(`src/main/resources/web`) is shared unchanged.
+Finds every reference to a company, person, project, document or product across a file dump,
+decides which references are the same real-world thing, links them, and serves an explorer UI
+with the evidence behind every link. Java 21, SQLite, and a vanilla JS UI in `src/main/resources/web`.
 
 ## Run
 
@@ -19,25 +16,28 @@ Then click **Analyse dataset**, choose the folder, choose how scans are read (no
 Tests:
 
 ```bash
-./gradlew test
+./gradlew test          # unit tests, and GenericDatasetTest, which builds a graph from a small fixture
+./gradlew datasetTest   # slow: builds john-doe (../john-doe or ERKG_DATA_ROOT) with and without its profile
 ```
 
 Settings are environment variables: `ERKG_DATA_ROOT`, `ERKG_WORK_DIR` (default `data`),
-`ERKG_OCR_WORKERS`, `ERKG_CLAUDE_MODEL`, `ERKG_ADJUDICATOR`, `ERKG_PROFILE`, `ERKG_OWNER`,
-`ERKG_OWNER_DOMAIN`, `ANTHROPIC_API_KEY`, `PORT`.
-
-To analyse the `john-doe` sample the same way as before, start the server with its profile:
-
-```bash
-ERKG_PROFILE=profiles/john-doe.json build/install/entity-grapgh-resolver/bin/entity-grapgh-resolver
-```
+`ERKG_OCR_WORKERS`, `ERKG_CLAUDE_MODEL`, `ERKG_ADJUDICATOR`, `ERKG_PROFILE`, `ERKG_PROFILES_DIR`,
+`ERKG_OWNER`, `ERKG_OWNER_DOMAIN`, `ANTHROPIC_API_KEY`, `PORT`.
 
 ## Other datasets
 
 Nothing in the code is tied to one dataset. What a dataset has of its own goes in an optional profile:
 
-- **Profile file.** `profile.json` in the dataset folder, or any file named by `ERKG_PROFILE`
-  (which wins). `profiles/john-doe.json` is the sample's profile.
+- **Profile file.** The first one found is used:
+  1. `profile.json` in the dataset folder: a dataset's own conventions always win;
+  2. the profile chosen in the "Analyse dataset" dialog (the files in `profiles/`, or "None");
+  3. `ERKG_PROFILE`, the server's default;
+  4. a file in `profiles/` whose folder patterns match 30% or more of the dataset's files
+     (so john-doe is recognised with nothing set);
+  5. the built-in defaults.
+
+  The analysis log and the result say which one was used. `profiles/john-doe.json` is the sample's
+  profile; `ERKG_PROFILES_DIR` moves the `profiles/` folder (the Docker image sets it).
 
   ```json
   {
@@ -54,8 +54,8 @@ Nothing in the code is tied to one dataset. What a dataset has of its own goes i
   With no pattern, files get no folder hints and everything else still runs. `jobIdPattern` defaults
   to the regex of the first `{job_id:...}`. Without a profile, broad default lists of free e-mail
   providers and legal suffixes (Ltd, Inc, GmbH, SA, BV, SRL, Pty, ...) are used.
-- **Owner.** Found from the files: PDF letterheads, then the most common sender domain, then the most
-  named organisation. It can be set in the "Analyse dataset" dialog, with `ERKG_OWNER` /
+- **Owner.** Found from the files: PDF letterheads, then the e-mail domain on the most e-mails (as
+  sender or recipient), then the most named organisation. It can be set in the "Analyse dataset" dialog, with `ERKG_OWNER` /
   `ERKG_OWNER_DOMAIN`, or with `owner` in the profile. If nothing is found there is no owner, and
   the graph is built without one.
 - **General extractor.** Files no template parser recognises, and free text (e-mail bodies, letters,
@@ -65,6 +65,15 @@ Nothing in the code is tied to one dataset. What a dataset has of its own goes i
 - **No API key.** The same extractor uses rules instead (role `free_text`, confidence 0.6): people in
   From/To/Cc lines and signature blocks, companies ending in a legal suffix, and labelled document
   numbers ("Invoice No: HR-1042"). It finds less than Claude, but sends nothing anywhere.
+- **Company names** don't depend on the order files are read in. After matching, each company is named
+  after the spelling its other spellings agree with most (not a typo that happened to come first), and
+  companies that still match (a domain, a longer name seen after a shorter one) are merged, with method
+  `merged:<rule>`.
+- **Projects without folders.** With no project folders, a project title ("Job: Conveyor Upgrade") seen
+  in 2 or more files for the same customer becomes a project (method `title_only`, confidence 0.6).
+  A title seen once stays unresolved. Job ids in text are only recognised with a `jobIdPattern`.
+- **Claude failures** (a bad key, a rate limit) fall back to the rules for that file, and are counted
+  in the extract step's summary (`free_text_claude_failed…`) and reported in the analysis log.
 - **Money** is read with `£ $ € ¥` or an ISO code (`USD`, `EUR`, ...) and in `1,234.56` or `1.234,56`
   form; documents keep a `currency`, and the UI formats amounts in it.
 
@@ -83,9 +92,9 @@ docker compose up -d --build        # http://localhost:8766
   DATASETS_DIR=/Users/you/Documents
   DATASET=/Users/you/Documents/datasets/john-doe
   ```
-- The sample's profile is in the image: add `ERKG_PROFILE=/opt/app/profiles/john-doe.json` to `.env`
-  to analyse `john-doe` (it applies to every dataset analysed by that container).
-- Host port **8766** by default (`PORT=...` to change), so it runs next to the Python version on 8765.
+- The shipped profiles are in the image (`/opt/app/profiles`), so john-doe's is picked automatically
+  and can be chosen in the dialog. `ERKG_PROFILE` in `.env` sets the container's default.
+- Host port **8766** by default (`PORT=...` to change).
 - The graph, OCR cache and extracted files live in the `graph-data` volume; `docker compose down -v` deletes them.
 - Container name: `entity-grapgh-resolver-app-1`. Logs: `docker compose logs -f`.
 
@@ -107,6 +116,4 @@ Targets **Java 21** (`options.release = 21`), but the code is written in plain *
 on purpose, so it is easy to follow: classic interfaces and classes, anonymous classes instead of
 lambdas, ordinary loops, no `var`, records, text blocks, switch expressions or `List.of`.
 
-Differences from the Python version: PDF text comes from PDFBox instead of PyMuPDF (same results on
-this dataset; PDFBox is a little more lenient with one damaged PDF), and Tesseract is called as a
-command-line tool.
+PDF text comes from PDFBox, and Tesseract is called as a command-line tool.

@@ -43,6 +43,8 @@ public final class Pipeline {
         public String owner;
         /** Let Claude read the files no template recognises (billed); otherwise rules read them, offline. */
         public boolean llmExtraction;
+        /** The profile chosen in the Analyse dialog (a shipped profile's file name, or "none"); null: not chosen. */
+        public String profile;
     }
 
     /** What build() produced. */
@@ -52,6 +54,8 @@ public final class Pipeline {
         public Map<String, Integer> read;
         /** The owner used for this graph (detected or given). */
         public Owner owner;
+        /** Where the dataset's profile came from: a file path, or "defaults". */
+        public String profile;
     }
 
     /**
@@ -73,8 +77,9 @@ public final class Pipeline {
             metaDao.set(conn, "ocr_backend", options.ocr.value());
             metaDao.set(conn, "started_at", now());
 
-            Profile profile = Profile.forDataset(dataRoot);
+            Profile profile = Profile.forDataset(dataRoot, options.profile);
             progress.update(1, "ingest", "Profile: " + profile.source);
+            metaDao.set(conn, "profile", profile.source);
             progress.update(1, "ingest", "Scanning " + dataRoot);
             File blobDir = new File(target.getAbsoluteFile().getParentFile(), "blobs");
             int n = Ingestor.run(conn, dataRoot, blobDir, profile, progress);
@@ -90,6 +95,7 @@ public final class Pipeline {
 
             Result result = new Result();
             result.owner = owner;
+            result.profile = profile.source;
             String llmKey = !options.llmExtraction ? null : options.apiKey != null ? options.apiKey : Config.apiKeyFromEnv();
             result.entities = graphStages(conn, dataset, llmKey, progress);
             result.read = read;
@@ -109,7 +115,7 @@ public final class Pipeline {
         Db.resetGraph(conn);
         long t = System.currentTimeMillis();
         progress.update(3, "extract", llmKey != null ? "Running (Claude reads the files no template recognises)" : "Running");
-        progress.update(3, "extract", "Done: " + Extractor.run(conn, dataset, llmKey) + " in " + seconds(t));
+        progress.update(3, "extract", "Done: " + Extractor.run(conn, dataset, llmKey, progress) + " in " + seconds(t));
         t = System.currentTimeMillis();
         
         progress.update(4, "resolve", "Running");

@@ -43,7 +43,20 @@ run {
 }
 
 test {
-    useJUnitPlatform()
+    useJUnitPlatform { excludeTags 'dataset' }
     workingDir = rootDir
     testLogging { events 'failed'; exceptionFormat 'full' }
+}
+
+// Slow regression tests that build graphs from the real sample dataset (../john-doe, or ERKG_DATA_ROOT):
+//   ./gradlew datasetTest
+tasks.register('datasetTest', Test) {
+    description = 'Builds graphs from the john-doe sample and checks its known results.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'dataset' }
+    workingDir = rootDir
+    maxHeapSize = '2g'
+    testLogging { events 'passed', 'skipped', 'failed'; exceptionFormat 'full' }
 }

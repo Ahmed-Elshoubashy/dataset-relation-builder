@@ -1,5 +1,7 @@
 package com.dubsof.graph.extract.parsers;
 
+import com.anthropic.client.AnthropicClient;
+import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.dubsof.graph.TestGraph;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.dataset.Dataset;
@@ -9,13 +11,17 @@ import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
 import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.ingest.FileKind;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The general extractor: the offline rules, and how an answer (from Claude or the rules) becomes mentions and facts. */
@@ -76,6 +82,46 @@ class LlmParserTest {
         Extraction ex = new Extraction(1, HARBOR);
         assertFalse(new LlmParser().parse(ex, row("Mail/reply.eml"), REPLY, null, null));
         assertTrue(ex.mentions.isEmpty());
+    }
+
+    @Test
+    void failedClaudeCallsFallBackToTheRulesAndAreReported() throws Exception {
+        // a fake Anthropic API that rejects every key
+        HttpServer api = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        api.createContext("/", exchange -> {
+            byte[] body = "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"}}"
+                    .getBytes("UTF-8");
+            exchange.getResponseHeaders().add("content-type", "application/json");
+            exchange.sendResponseHeaders(401, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        api.start();
+        AnthropicClient client = AnthropicOkHttpClient.builder().baseUrl("http://127.0.0.1:" + api.getAddress().getPort())
+                .apiKey("sk-bad").maxRetries(0).build();
+        try (LlmParser parser = new LlmParser(client)) {
+            FileRow row = row("Mail/reply.eml");
+            parser.prepare(Arrays.asList(row), Arrays.asList(REPLY));
+            Extraction ex = document("Mail/reply.eml");
+            assertTrue(parser.parse(ex, row, REPLY, null, null));
+
+            // the rules read the file, and the failed file is not asked about again
+            assertEquals(MentionRole.FREE_TEXT, mention(ex, "Dana Price").role);
+            assertEquals(Integer.valueOf(1), parser.claudeSummary().get("free_text_claude_calls"));
+            assertEquals(Integer.valueOf(1), parser.claudeSummary().get("free_text_claude_failed_auth"));
+            assertTrue(parser.claudeProblem().startsWith("Claude extraction failed for all 1 files: UnauthorizedException"),
+                    parser.claudeProblem());
+        } finally {
+            api.stop(0);
+        }
+    }
+
+    @Test
+    void offlineReportsNothing() throws Exception {
+        try (LlmParser parser = new LlmParser()) {
+            assertTrue(parser.claudeSummary().isEmpty());
+            assertNull(parser.claudeProblem());
+        }
     }
 
     /** An extraction that already has the file's own document, as the Extractor gives it to the general extractor. */

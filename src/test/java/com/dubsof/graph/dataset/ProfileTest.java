@@ -2,6 +2,7 @@ package com.dubsof.graph.dataset;
 
 import com.dubsof.graph.TestGraph;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -10,6 +11,7 @@ import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProfileTest {
@@ -81,5 +83,45 @@ class ProfileTest {
         assertEquals("Palettierzelle", ctx.job);
         assertEquals("Harbor Robotics Inc", profile.owner);
         assertNull(profile.jobIdPattern);
+    }
+
+    // ---------------------------------------------------------------- which profile a dataset gets
+
+    @Test
+    void datasetsOwnProfileWinsOverTheDialogChoice(@TempDir Path dir) throws Exception {
+        File own = dir.resolve("profile.json").toFile();
+        Files.write(own.toPath(), "{\"folderPatterns\": [\"Clients/{company}/**\"]}".getBytes("UTF-8"));
+        assertEquals(own.getPath(), Profile.forDataset(dir.toFile(), "john-doe.json").source);
+    }
+
+    @Test
+    void dialogChoiceIsUsedWithoutAProfileInTheDataset(@TempDir Path dir) throws Exception {
+        assertTrue(Profile.forDataset(dir.toFile(), "john-doe.json").source.endsWith("john-doe.json"));
+        assertEquals("defaults", Profile.forDataset(dir.toFile(), Profile.NONE).source);
+    }
+
+    @Test
+    void onlyShippedProfilesCanBeChosen(@TempDir Path dir) {
+        assertTrue(Profile.available().contains("john-doe.json"));
+        assertThrows(IllegalArgumentException.class, () -> Profile.forDataset(dir.toFile(), "../build.gradle"));
+    }
+
+    @Test
+    void shippedProfileIsSuggestedWhenItsFoldersMatch(@TempDir Path dir) throws Exception {
+        for (String path : Arrays.asList("Customers/Acme Corporation/JOB-2023-0003 Shrink Wrap Retrofit/Invoices/INV-8034.pdf",
+                "Customers/Acme Corporation/Contracts/MSA.pdf", "Admin/policy.docx")) {
+            File file = dir.resolve(path).toFile();
+            file.getParentFile().mkdirs();
+            Files.write(file.toPath(), new byte[] {1});
+        }
+        Profile suggested = Profile.suggest(dir.toFile());
+        assertTrue(suggested.source.contains("john-doe.json"), suggested.source);
+        assertTrue(suggested.source.contains("67%"), suggested.source);
+    }
+
+    @Test
+    void nothingIsSuggestedForAnotherLayout() throws Exception {
+        File generic = new File("src/test/resources/datasets/generic");
+        assertNull(Profile.suggest(generic));
     }
 }

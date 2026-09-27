@@ -30,7 +30,6 @@ import java.util.regex.Pattern;
 
 /**
  * HTTP server for the explorer: the JSON API plus the static UI in resources/web.
- * Same endpoints and JSON as the Python version, so the same web page works with both.
  *
  * Each request opens its own SQLite connection under a read lock; installing a freshly
  * analysed graph takes the write lock, so no request ever sees a half-replaced database.

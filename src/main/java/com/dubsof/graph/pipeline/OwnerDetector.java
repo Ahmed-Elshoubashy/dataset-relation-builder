@@ -14,6 +14,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -21,7 +22,8 @@ import java.util.regex.Pattern;
  * Works out whose file share this is, from three signals:
  * <ol>
  *   <li>the letterhead: the organisation on the first line of most generated PDFs;</li>
- *   <li>the most common e-mail sender domain (free providers like gmail.com left out);</li>
+ *   <li>the e-mail domain on the most e-mails, as sender or recipient: the owner's people are on nearly
+ *       every e-mail in its own file share (free providers like gmail.com left out);</li>
  *   <li>with no letterhead: the organisation named in the most files, preferring one that matches
  *       the sender domain (a small dataset rarely has enough PDFs for a letterhead).</li>
  * </ol>
@@ -34,7 +36,9 @@ public final class OwnerDetector {
     /** An organisation must be named in at least this many files to be taken as the owner. */
     private static final int MIN_FILES_NAMING_OWNER = 2;
 
-    private static final Pattern FROM = Pattern.compile("^From: .*?@([\\w.-]+)", Pattern.MULTILINE);
+    /** A From/To/Cc header line. */
+    private static final Pattern ADDRESS_HEADER = Pattern.compile("^(From|To|Cc): (.*)$", Pattern.MULTILINE);
+    private static final Pattern DOMAIN = Pattern.compile("@([\\w-]+(?:\\.[\\w-]+)+)");
 
     private static final FilesDao filesDao = new FilesDao();
 
@@ -42,7 +46,7 @@ public final class OwnerDetector {
     }
 
     public static Owner detect(Connection conn, NameMatcher names) throws Exception {
-        String domain = mostCommonSenderDomain(conn, names);
+        String domain = mostCommonEmailDomain(conn, names);
         String name = letterhead(conn, names);
         if (name == null) {
             name = mostNamedOrganisation(conn, names, domain);
@@ -78,24 +82,41 @@ public final class OwnerDetector {
         return name;
     }
 
-    private static String mostCommonSenderDomain(Connection conn, NameMatcher names) throws Exception {
-        Map<String, Integer> domains = new HashMap<>();
+    /**
+     * The domain on the most e-mails (in From, To or Cc). Ties go to the domain that sent more of them,
+     * then to the alphabetically first, so the answer never depends on file order.
+     */
+    private static String mostCommonEmailDomain(Connection conn, NameMatcher names) throws Exception {
+        Map<String, Integer> emailsWithDomain = new TreeMap<>();
+        Map<String, Integer> emailsSentFromDomain = new HashMap<>();
         for (FileRow f : filesDao.findTexts(conn, FileKind.EML, FileStatus.OK, null)) {
-            Matcher m = FROM.matcher(f.text);
-            if (m.find()) {
-                String domain = m.group(1).toLowerCase().replaceAll(">+$", "");
-                if (!names.isGenericDomain(domain)) {
-                    count(domains, domain);
+            int headerEnd = f.text.indexOf("\n\n");
+            String headers = headerEnd < 0 ? f.text : f.text.substring(0, headerEnd);
+            Set<String> inThisEmail = new HashSet<>();
+            for (Matcher header = ADDRESS_HEADER.matcher(headers); header.find(); ) {
+                for (Matcher d = DOMAIN.matcher(header.group(2)); d.find(); ) {
+                    String domain = d.group(1).toLowerCase();
+                    if (names.isGenericDomain(domain)) {
+                        continue;
+                    }
+                    if (inThisEmail.add(domain)) {
+                        count(emailsWithDomain, domain);
+                    }
+                    if (header.group(1).equals("From")) {
+                        count(emailsSentFromDomain, domain);
+                    }
                 }
             }
         }
-        String domain = null;
-        for (Map.Entry<String, Integer> e : domains.entrySet()) {
-            if (domain == null || e.getValue() > domains.get(domain)) {
-                domain = e.getKey();
+        String best = null;
+        for (Map.Entry<String, Integer> e : emailsWithDomain.entrySet()) {
+            int sent = emailsSentFromDomain.getOrDefault(e.getKey(), 0);
+            if (best == null || e.getValue() > emailsWithDomain.get(best)
+                    || (e.getValue().equals(emailsWithDomain.get(best)) && sent > emailsSentFromDomain.getOrDefault(best, 0))) {
+                best = e.getKey();
             }
         }
-        return domain;
+        return best;
     }
 
     /**

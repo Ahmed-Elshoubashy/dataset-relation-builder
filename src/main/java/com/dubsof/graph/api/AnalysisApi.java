@@ -6,6 +6,7 @@ import com.anthropic.errors.PermissionDeniedException;
 import com.anthropic.errors.UnauthorizedException;
 import com.anthropic.models.models.ModelListParams;
 import com.dubsof.graph.Config;
+import com.dubsof.graph.dataset.Profile;
 import com.dubsof.graph.pipeline.Pipeline;
 import com.dubsof.graph.pipeline.Progress;
 import com.dubsof.graph.read.OcrBackend;
@@ -85,6 +86,8 @@ public class AnalysisApi {
         o.put("tesseract", TesseractReader.isInstalled());
         o.put("env_key", Config.apiKeyFromEnv() != null);
         o.put("claude_model", Config.CLAUDE_MODEL);
+        o.put("profiles", Profile.available());
+        o.put("default_profile", Config.PROFILE == null ? null : new File(Config.PROFILE).getName());
         return o;
     }
 
@@ -170,6 +173,10 @@ public class AnalysisApi {
         String typedOwner = body.get("owner") == null ? "" : String.valueOf(body.get("owner")).trim();
         final String owner = typedOwner.isEmpty() ? null : typedOwner;   // empty: detect it from the files
         final boolean llm = Boolean.TRUE.equals(body.get("llm"));        // Claude reads unrecognised files
+        final String profile = body.get("profile") == null ? null : String.valueOf(body.get("profile"));
+        if (profile != null && !profile.isEmpty() && !profile.equals(Profile.NONE) && !Profile.available().contains(profile)) {
+            throw new ApiServer.ApiException(400, "Unknown profile: " + profile);
+        }
 
         if (!insideRoot(root.getAbsoluteFile().getCanonicalFile())) {
             throw new ApiServer.ApiException(400, "Only folders inside " + Config.BROWSE_ROOT + " are shared with the app. "
@@ -210,7 +217,7 @@ public class AnalysisApi {
         }
         Thread worker = new Thread(new Runnable() {
             public void run() {
-                runAnalysis(root, backend, key, owner, llm);
+                runAnalysis(root, backend, key, owner, llm, profile);
             }
         }, "analysis");
         worker.setDaemon(true);
@@ -218,7 +225,7 @@ public class AnalysisApi {
         return status();
     }
 
-    private void runAnalysis(File root, OcrBackend backend, String key, String owner, boolean llm) {
+    private void runAnalysis(File root, OcrBackend backend, String key, String owner, boolean llm, String profile) {
         Progress progress = new Progress() {
             public void update(int step, String stage, String detail) {
                 progress(step, stage, detail);
@@ -230,6 +237,7 @@ public class AnalysisApi {
             options.apiKey = key;
             options.owner = owner;
             options.llmExtraction = llm;
+            options.profile = profile;
             Pipeline.Result out = Pipeline.build(root, Config.DB_FILE, options, progress);
             progress(5, "relate", "Loading the new graph");
             server.installGraph(out.built);
@@ -239,6 +247,7 @@ public class AnalysisApi {
                 result.put("read", out.read);
                 result.put("owner", out.owner.name);
                 result.put("owner_domain", out.owner.domain);
+                result.put("profile", out.profile);
                 state = "done";
             }
             progress(5, "relate", "Analysis complete");

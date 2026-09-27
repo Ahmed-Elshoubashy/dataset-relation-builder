@@ -11,23 +11,32 @@ The brief says reviewers judge it on: **ambiguous matches, data quality, scalabi
 Java 21, Gradle, SQLite, and the JDK `HttpServer` with a vanilla JS UI in `src/main/resources/web`.
 
 ### Pipeline (see the README "Code map")
-1. ingest: `ingest.Ingestor` walks the folder, unpacks zips and attachments, hashes files.
+1. ingest: `ingest.Ingestor` walks the folder, unpacks zips and attachments, hashes files, and reads
+   folder hints with the dataset's profile (`dataset.Profile` / `dataset.FolderPattern`).
 2. read: `read.TextStage` gets native text; scans go through OCR (`ClaudeReader`, `TesseractReader`, `NullReader`, cached by `CachedReader`).
-3. extract: `extract.Extractor` runs 16 template parsers (`extract/parsers/*`) that write **mentions** and **facts**. This stage decides nothing.
+   Then `pipeline.OwnerDetector` finds the owner organisation (or none).
+3. extract: `extract.Extractor` runs 16 template parsers (`extract/parsers/*`), then the general
+   extractor `LlmParser` on free text. `LlmParser` asks Claude, or uses `FreeTextRules` offline.
+   Parsers write **mentions** and **facts**. This stage decides nothing.
 4. resolve: `resolve.Resolver` + `resolve.NameMatcher` group mentions into **entities**. Borderline company matches go to an `Adjudicator`.
 5. relate: `relate.Relator` turns facts into **relations** between entities, with evidence files.
+
+Per-analysis settings travel in a `dataset.Dataset` (owner + profile) passed to every stage. There are no mutable statics.
 
 Schema: `db/Db.java`. Every mention records `entity_id`, `method` (the rule that resolved it) and `confidence`.
 
 ### Commands
 ```bash
-./gradlew test                 # unit tests
+./gradlew test                 # unit tests (GenericDatasetTest builds its own graph)
 ./gradlew installDist
 build/install/entity-grapgh-resolver/bin/entity-grapgh-resolver   # UI on http://localhost:8765
+ERKG_PROFILE=profiles/john-doe.json build/install/entity-grapgh-resolver/bin/entity-grapgh-resolver   # the sample, with its profile
 ```
 There is **no CLI analysis command**. `Main` only starts the server. A graph is built from the UI
-("Analyse dataset") or with `POST /api/analysis`, into `data/graph.db`.
-The sample dataset is at `../john-doe` (`ERKG_DATA_ROOT`).
+("Analyse dataset") or with `POST /api/analysis`, for example:
+`curl -X POST localhost:8765/api/analysis -H 'content-type: application/json' -d '{"data_root":"/abs/path/john-doe","ocr":"none"}'`,
+then poll `GET /api/analysis`. Set `ERKG_WORK_DIR` to a scratch folder so `data/` is not overwritten.
+The sample dataset is at `../john-doe`.
 `PipelineTest` reads `data/graph.db` and is skipped when that file doesn't exist.
 
 ### Code style
@@ -40,127 +49,125 @@ The sample dataset is at `../john-doe` (`ERKG_DATA_ROOT`).
 
 ---
 
-## Current task: stop the system depending on this one dataset
+## Done: stop depending on the john-doe dataset (commit `aa70d37`)
 
-A code review found that the extraction and several settings only work for the `john-doe` sample
-dataset. On any other company's files, most content would not be extracted. The goal is that a
-different dataset (other folder layout, other country, other document templates) still produces a
-useful graph, while `john-doe` results stay at least as good as now.
+Delivered: the dataset profile (`profile.json` / `ERKG_PROFILE`, `profiles/john-doe.json`), owner
+detection with "no owner" allowed and a UI override, the general extractor (Claude or offline rules),
+any currency, a Claude prompt built from the data, accent-insensitive names, `GenericDatasetTest`, and
+the README section on other datasets.
 
-### Where the dataset is hardcoded
+Verified in a review on 2026-09-27:
+- All 128 tests pass.
+- John-doe rebuilt **with** its profile matches the old results: 12 customers + owner, 38 folder
+  projects, `QUO-5238` from 3 files, `DWG-9296` split in two, 0 unresolved company mentions.
+- No Meridian, packaging, `JOB-` or `Customers` literals are left in code.
 
-| Assumption | Location | Fix (details in the step) |
-|---|---|---|
-| Folder layout `Customers/<company>/JOB-yyyy-nnnn <title>/` | `ingest/Ingestor.java` (`JOB_DIR` line 47; path split around lines 344-360) | Step 5: read folder patterns from an optional `profile.json`; no pattern means no folder hints |
-| Owner defaults to "Meridian Packaging Systems Ltd" / `meridianpackaging.co.uk` | `Config.java` lines 32-34 | Step 2: remove the defaults; env vars become optional overrides |
-| Owner detection needs PDF letterheads with English legal suffixes | `pipeline/OwnerDetector.java` (has a `TODO, revist`) | Step 2: add a most-frequent-organisation/domain signal; allow "no owner"; user can override in the UI |
-| `Config.ownerName` is a mutable static, set during analysis and read by parsers and the resolver | `Pipeline.detectOwner`, `ParserUtils`, `LetterParser`, `Resolver`, `Relator` | Step 2: pass an owner value from `Pipeline.build` into the stages; handle null |
-| 16 parsers, one per template of this dataset; free text only finds names that are already known | `extract/Extractor.java` lines 79-95; `relate/Relator.linkNamesInFreeText` | Step 6: `LlmParser` as a last-resort parser, with a rule-based fallback when there is no API key |
-| Claude adjudicator prompt says "UK packaging-machinery supplier" | `resolve/ClaudeAdjudicator.java` line 40 | Step 3: build the prompt from the detected owner and the mention context |
-| Only £ is recognised as a currency | `extract/parsers/BusinessDocParser.java` line 30; `web/app.js` line 258 (`money()`) | Step 4: parse any symbol or ISO code, store `currency`, format with `Intl.NumberFormat` |
-| Fixed lists of free e-mail providers and legal suffixes | `resolve/NameMatcher.java` (`GENERIC_DOMAINS`, `LEGAL_SUFFIXES`) | Step 5: broad default lists, overridable in `profile.json` |
-| Tests assert john-doe's exact counts (12 customers, 38 projects) and need a prebuilt graph | `src/test/java/com/dubsof/graph/PipelineTest.java` | Step 1: a second-dataset test that builds its own graph and checks general rules, not counts |
+The review found the problems below. They are the current task.
+
+---
+
+## Current task: fix the gaps the review found
+
+### Findings
+
+| # | Problem | Evidence | Location |
+|---|---|---|---|
+| 1 | The profile is not used unless someone sets `ERKG_PROFILE` or puts `profile.json` in the dataset. Docker and the UI don't set it, so by default john-doe is analysed **without** it. | John-doe with no profile: **0 projects** (was 38), 1,934 project mentions unresolved, **19 companies** (was 15) | `dataset/Profile.java:70` `forDataset`; `api/AnalysisApi.java`; `compose.yaml` |
+| 2 | Without customer folders as anchors, company clustering is greedy and order-dependent: the **first spelling seen becomes the name**, even when it is a typo. | "Vantage Electronic Inc", "Ashcome Confectionery", "Kingsly Textiles" became the names | `resolve/Resolver.java:174` `resolveCompanies`, `:235` `decideCompany` |
+| 3 | A company mention **longer** than the known name never matches (truncation only works one way). | "Whitmore Dairy" was created first, so "Whitmore Dairy Products" became a second company | `resolve/NameMatcher.java:162` `matchCompany`, `:234` in `align` |
+| 4 | E-mail domains become companies of their own when the company's name was misspelled first (see 2); nothing merges them later. | `vantageelectronics.com`, `kingsleytextiles.co.uk`, `ashcombeconfec.co.uk` became companies | `Resolver.decideCompany` |
+| 5 | Projects only exist if a folder defines them. A job id or project title found in text (templates, Claude or rules) can only attach to a folder project; otherwise it stays `unresolved`. The general extractor's project findings are thrown away on any dataset without project folders. | See 1; `GenericDatasetTest` has no projects, so no test catches it | `resolve/Resolver.java:286` `resolveProjects`, step 2 at `:343`, `:392` |
+| 6 | `ERKG_PROFILE` is server-wide and **overrides** `profile.json`, so it also applies to any other folder analysed from the UI. Set to john-doe, it silently applies john-doe's layout to other datasets. | By reading the code | `Profile.forDataset` |
+| 7 | Claude failures in the general extractor are swallowed: a bad key or rate limit silently falls back to the rules, and nothing is logged or counted. | By reading the code | `extract/parsers/LlmParser.java:259` `askClaude`, catch at `:283` |
+| 8 | The Claude answer cache is keyed by file sha256 + model only, not prompt version. Changing the prompt reuses stale answers. | By reading the code | `LlmParser.cached` / `save`; `dao/LlmExtractionsDao.java` |
+| 9 | The `ocr_cache.db` connection in `LlmParser` is opened lazily and never closed, so one leaks per analysis. | By reading the code | `LlmParser.java:367` `cache()` |
+| 10 | `findCompanyNames` keeps capitalised sentence-start words: "Ask Harbor Robotics Inc" includes "Ask". Only a fixed list of leading words is stripped. | By reading the code | `resolve/NameMatcher.java:384` |
+| 11 | Person keys spell "ü" as "ue", so "Müller"/"Mueller" match, but the English spelling "Muller" stays a different person. Companies tolerate this through typo matching; people don't. | By reading the code | `NameMatcher.personKey` / `plainLetters` |
+| 12 | John-doe regressions are still only checked by hand: `PipelineTest` needs a locally built `data/graph.db`. | Skipped on a clean checkout | `src/test/java/com/dubsof/graph/PipelineTest.java` |
 
 ### Plan, in this order
 
-Do the steps in order. Each step should leave the test suite passing.
+Each step should leave `./gradlew test` passing.
 
-#### Step 1: Test on a second dataset (do this first, so every later change can be measured)
-- Add a small fixture under `src/test/resources/datasets/generic/`, laid out **differently** from john-doe:
-  - no `Customers/` folder;
-  - a US or German owner company;
-  - accented names ("José Müller", "Müller GmbH" and "Mueller GmbH");
-  - a `$` or `€` invoice;
-  - a plain `.eml` thread whose body mentions a company and a person;
-  - a free-text meeting note.
-  Plain text, `.eml`, and a generated PDF are enough. Keep it small.
-- Add a test that runs `Pipeline.build(...)` on the fixture into a temp directory, so it does not
-  depend on `data/graph.db`. Use `OcrBackend` none and the rules adjudicator.
-- Assert general rules, not counts. For example:
-  - every e-mail sender becomes a person;
-  - the owner is detected;
-  - no company mention is unresolved (except free e-mail domains);
-  - the invoice total and currency are read;
-  - names in the meeting note are linked.
-- Some of these assertions will fail until later steps are done. Mark them `@Disabled("step N")`
-  and enable each one in the step that fixes it.
+#### Step 1: Make the tests catch findings 1-5 first
+- Extend the `GenericDatasetTest` fixture (`src/test/resources/datasets/generic/`) and add assertions. Keep it small, with no profile:
+  - a customer whose **first** appearance is misspelled (e.g. bill-to "Harbour Robotcs Inc" before several
+    correct "Harbor Robotics Inc" copies) → one company, named by the common spelling;
+  - a short name seen before a longer one ("Mueller" before "Mueller GmbH Anlagenbau", or similar) → one company;
+  - a sender domain for a customer whose name was first misspelled → merged into that company;
+  - a project with no folder: a job id like `P-2041` or a repeated title in two documents → one project entity.
+- Add a john-doe regression test that builds its own graph **only when** `../john-doe` exists
+  (`assumeTrue`). Run it with and without `profiles/john-doe.json`, and check the counts from
+  "Done" above for both runs, or at least companies = 15 and projects = 38. It is slow, so tag it
+  (e.g. `@Tag("dataset")`) and document how to run it.
 
-#### Step 2: Detect the owner instead of assuming it
-- Remove the Meridian defaults in `Config`. Keep `ERKG_OWNER` / `ERKG_OWNER_DOMAIN` as optional overrides only.
-- In `OwnerDetector`, add a signal besides letterheads: the most frequent organisation or sender
-  domain across all files. Widen the legal-suffix pattern (see step 5).
-- If nothing is detected there is **no owner**. Every place that uses the owner must handle null:
-  the resolver's anchor, `ParserUtils` `IMPLIED_OWNER`, `LetterParser`, and the gazetteer exclusion in `Relator`.
-- Replace the mutable static `Config.ownerName` with an owner value passed from `Pipeline.build`
-  to the stages (e.g. a small `Owner` object on the stage constructors). The server has 8 threads,
-  so a shared static is a bug.
-- Show the detected owner in the "Analyse dataset" dialog and let the user override it
-  (`AnalysisApi` + `app.js`).
+#### Step 2: Pick the profile sensibly (findings 1, 6)
+- Precedence should be: `profile.json` in the dataset root > a profile chosen in the Analyse dialog
+  > `ERKG_PROFILE` (the default only) > built-in defaults. A dataset's own file wins over the server-wide env var.
+- Add a "Profile" select to the Analyse dialog listing `profiles/*.json` plus "none" (new
+  `GET /api/analysis/options` field; `AnalysisApi.start` accepts `profile`).
+- Optional: auto-suggest a shipped profile when its `folderPatterns` match most of the dataset's
+  paths (e.g. >30% of files). Show the chosen profile in the analysis log (it already logs `Profile: ...`).
 
-#### Step 3: Build the Claude prompt from the data
-- In `ClaudeAdjudicator`, remove the industry and country wording. Build the prompt from the
-  detected owner (if any) and the mention context:
-  `"In the business files of <owner>, does the company name '<a>' refer to the same ... as '<b>'?"`
+#### Step 3: Company clustering that doesn't depend on order (findings 2, 3, 4)
+- **Canonical name:** after all company mentions are assigned, rename each company (except anchors:
+  owner, folder customers) to its most frequent surface form among the strongest roles (bill-to,
+  letterhead, vCard before filename/domain). Use `entitiesDao.updateName`, as `resolveProducts` does.
+  The key can stay.
+- **Symmetric truncation:** in `NameMatcher.align`, when mention words are left over but the candidate has none,
+  allow it with the same per-word penalty when the leftover words are only descriptive (i.e. the candidate is a
+  prefix of the mention). Add `NameMatcherTest` cases both ways; keep the "Acme" vs "Acme Robotics" guard
+  (a different second word must still not match).
+- **Merge pass:** after the first pass, compare every non-anchor company with every other one again (both
+  directions, domains vs names too) and merge pairs at or above `ACCEPT`: move mentions, keep the anchor or
+  the larger entity. Record `method = "merged:<rule>"` on moved mentions so the UI explains it.
+  Company counts are small, so O(n²) is fine here; note it in a comment.
 
-#### Step 4: Recognise any currency
-- Parse `£ $ € ¥` and ISO codes (`GBP`, `USD`, `EUR`, ...) next to amounts. Keep accepting the
-  garbled `·` / `?` characters the current regex handles.
-- Store a `currency` attribute on documents.
-- In `app.js`, `money()` should use `Intl.NumberFormat(undefined, {style: "currency", currency})`
-  with the document's currency, falling back to plain numbers when there is none.
+#### Step 4: Projects without folders (finding 5)
+- In `Resolver.resolveProjects`:
+  - A mention with a `job_id` but no folder project already creates a project in step 1. Make sure job ids
+    found in text reach it: `ParserUtils` refs use `profile.jobIdPattern`, which is null without a profile.
+    Add a conservative default pattern only if it doesn't create noise on john-doe; otherwise leave it
+    and rely on titles.
+  - A title-only mention with no candidate: create a project keyed by `titleKey` (+ customer when known)
+    **if** the same title appears in at least 2 files; otherwise keep `unresolved`. Use method `title_only`
+    and a confidence of 0.6.
+- John-doe with its profile must still have exactly 38 projects (folder projects only). Check
+  whether `title_only` projects appear there. If they do, they must be real, or be limited to datasets without folder patterns.
 
-#### Step 5: Move conventions into an optional profile file
-- Add an optional `profile.json`, read from the dataset root or from `ERKG_PROFILE`:
-  ```json
-  {
-    "folderPatterns": ["Customers/{company}/{job_id:JOB-\\d{4}-\\d{4}} {title}/**"],
-    "owner": null,
-    "genericEmailDomains": ["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com"],
-    "legalSuffixes": ["ltd", "limited", "inc", "llc", "corp", "plc", "gmbh", "ag", "sa", "sarl", "bv", "nv", "pty", "srl", "spa"]
-  }
-  ```
-- `Ingestor` should use `folderPatterns` instead of the hardcoded `Customers` / `JOB_DIR` logic.
-  With no patterns, files simply get no folder hints and everything else still runs.
-- Ship a john-doe profile that reproduces today's behaviour exactly, and use a broad default list
-  of legal suffixes and free e-mail providers when there is no profile.
+#### Step 5: Make Claude extraction observable and correct (findings 7, 8, 9)
+- Count Claude failures by type (auth, rate limit, other) in `LlmParser` and add them to the extract step's
+  summary (`free_text_claude_failed=…`). Log the first error message once. If *every* call fails, say so in the
+  analysis log: "Claude extraction failed for all N files: <message>; used rules instead".
+- Add a `PROMPT_VERSION` constant and include it in the cache key (`LlmExtractionsDao`). Bump it whenever the prompt or schema changes.
+- Close the cache connection when extraction ends (e.g. `LlmParser implements AutoCloseable`, closed in `Extractor.run`).
 
-#### Step 6: A general extractor for files no template recognises (largest step, biggest gain)
-- Add `extract/parsers/LlmParser.java` implementing `Parser`, placed **last** in `Extractor.parsers`.
-  It runs when no template parser handled the file, and also on free text: e-mail bodies, notes, letters.
-- It asks Claude for structured JSON, limited to the existing enums (`EntityType`, `MentionRole`, `RelationType`):
-  `{"entities": [{"type", "name", "email", "organisation", "role"}], "relations": [{"src", "rel", "dst"}]}`.
-  Reuse the structured-output call pattern in `ClaudeAdjudicator` (`output_config` with a JSON schema)
-  and `Config.CLAUDE_MODEL`.
-- Cache answers by the file's `sha256` in `ocr_cache.db`, as `CachedReader` does, so rebuilds cost nothing.
-- Mentions it creates get `method = "llm"` and a lower confidence (e.g. 0.7), so the resolver and
-  the UI can tell them apart from template fields. Show that method in the UI evidence list and in
-  `METHOD_HELP` in `app.js`.
-- **No API key:** fall back to a rule-based extractor with the same output:
-  - people from `From:` / `To:` headers and signature blocks (name line + e-mail/phone);
-  - companies from capitalised word runs ending in a legal suffix;
-  - document numbers from patterns like `[A-Z]{2,5}-\d+`.
-  The offline mode must keep working.
-- Do not change the resolver's interface. It only reads mentions and facts, so new mentions flow
-  through the existing matching.
+#### Step 6: Small name fixes (findings 10, 11)
+- `findCompanyNames`: drop leading capitalised words that are sentence-initial (after `^`, `.`, `!`, `?`, or a line
+  start) when the rest is still at least one word + suffix, or require the name to be seen at least twice across files
+  before it counts. Add tests.
+- `personKey`: after `plainLetters`, also compare the variant with "ue/oe/ae" → "u/o/a", e.g. by trying both
+  keys when looking up a person. Keep it exact otherwise (no fuzzy person matching in this task).
 
 ### Done when
-- `./gradlew test` passes on a clean checkout with **no** `data/graph.db`. The new fixture test runs
-  and is not skipped.
-- The fixture test passes with no `@Disabled` assertions left (with the rule-based fallback, i.e. no API key).
-- Built from the UI, john-doe gives the same results as before: 12 customers + owner, 38 folder
-  projects, `QUO-5238` merged from 3+ files, `DWG-9296` split in two (see `PipelineTest`).
-- No code mentions Meridian, packaging, `JOB-` or `Customers` outside the john-doe profile and its tests.
-- The README has a short section on how the system handles other datasets (the profile file, the
-  general extractor, and what happens with no API key).
+- `./gradlew test` passes on a clean checkout with no `data/graph.db`, with the new `GenericDatasetTest` assertions enabled.
+- John-doe **without** a profile: 15 companies with the correct names (the folder spellings or the most common
+  spelling, e.g. "Vantage Electronics Inc", not "Vantage Electronic Inc"); no e-mail-domain companies for known customers.
+- John-doe **with** its profile: unchanged (12 customers + owner, 38 folder projects, `QUO-5238` from 3+ files,
+  `DWG-9296` split in two, 0 unresolved company mentions).
+- A dataset analysed from the UI uses its own `profile.json` even when `ERKG_PROFILE` is set, and the dialog can choose a profile.
+- A failing API key shows up in the analysis log, not only as fewer mentions.
+- README "Other datasets" is updated: profile precedence, the dialog's profile choice, projects without folders.
 
 ### Known issues outside this task (don't fix unless asked, but don't make them worse)
 - Data-quality checks were removed in commit `eff91c0`. Document `conflicts` are stored but never shown.
 - Borderline company matches (score 0.65-0.80) are thrown away without being recorded
   (`Resolver.decideCompany`), even though `RuleAdjudicator`'s comment says they are logged.
+  Step 3's merge pass must not auto-merge these; only `>= ACCEPT`.
 - Ambiguous people without an organisation all merge into one `name|?` entity with confidence 1.0
   (`Resolver.resolvePeople`).
 - People with a free e-mail address (gmail, ...) are matched by name only; their e-mail is ignored.
-- `NameMatcher` strips non-ASCII letters ("José" becomes "jos"). Step 1's fixture will expose this.
-  Normalising accents with `java.text.Normalizer` (NFD, then drop combining marks) in `companyWords`
-  and `personKey` is a small fix that is in scope if the fixture needs it.
+- People are probably over-split: the person's organisation comes from the document (`attn` → bill-to customer),
+  so the same name at several customers becomes several people (john-doe: 1,514 people, "Liam Osei" ×7).
 - `relation_evidence` is written but never read by the API. There is no evidence or confidence per link in the UI.
+- Fixed since the first review: `NameMatcher` no longer strips accented letters (`plainLetters`).

@@ -348,6 +348,17 @@ function showError(msg) {
   $("#an-error").textContent = msg || "";
   $("#an-error").hidden = !msg;
 }
+/** "Automatic" (the server's default, or a shipped profile that fits the folders), "None", then each shipped profile. */
+function fillProfiles() {
+  const select = $("#an-profile");
+  const kept = select.value;
+  const auto = analyzeOpts.default_profile
+    ? `Automatic (server default: ${analyzeOpts.default_profile})`
+    : "Automatic (a shipped profile if the folders match, else none)";
+  select.replaceChildren(new Option(auto, ""), new Option("None: defaults only", "none"),
+    ...(analyzeOpts.profiles || []).map((name) => new Option(name.replace(/\.json$/, ""), name)));
+  if ([...select.options].some((o) => o.value === kept)) select.value = kept;
+}
 async function openAnalyze() {
   analyzeOpts = await api("/api/analysis/options");
   const tess = $("#ocr-tesseract");
@@ -358,6 +369,7 @@ async function openAnalyze() {
     ? "Leave empty to use the key already set on the server. Used for this analysis only; it isn't saved to disk, the database or logs."
     : "Used for this analysis only. It isn't saved to disk, the database or logs.";
   if (!$("#an-path").value) $("#an-path").value = state.stats?.meta?.data_root || analyzeOpts.default_root;
+  fillProfiles();
   syncOcrChoice();
   showError("");
   const job = await api("/api/analysis");
@@ -413,7 +425,8 @@ function renderJob(job) {
   if (job.state === "done") {
     const e = job.result?.entities || {};
     const total = Object.values(e).reduce((a, b) => a + b, 0);
-    const owner = job.result?.owner ? ` Owner: ${job.result.owner}.` : " No owner organisation was found.";
+    const owner = (job.result?.owner ? ` Owner: ${job.result.owner}.` : " No owner organisation was found.")
+      + (job.result?.profile ? ` Profile: ${job.result.profile.split("/").pop()}.` : "");
     $("#an-detail").textContent = `Analysis complete: ${total.toLocaleString()} entities (${TYPES.map((t) => `${e[t.key] || 0} ${t.label.toLowerCase()}`).join(", ")}).${owner}`;
   } else if (failed) {
     $("#an-detail").textContent = `The analysis stopped: ${job.error}`;
@@ -479,6 +492,7 @@ function initAnalyze() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data_root, ocr, llm, owner: $("#an-owner").value.trim() || null,
+          profile: $("#an-profile").value || null,
           api_key: ocr === "claude" || llm ? $("#an-key").value.trim() || null : null }),
       });
       const body = await r.json();

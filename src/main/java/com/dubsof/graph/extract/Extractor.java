@@ -28,6 +28,7 @@ import com.dubsof.graph.extract.parsers.VcardParser;
 import com.dubsof.graph.ingest.FileKind;
 import com.dubsof.graph.ingest.FileStatus;
 import com.dubsof.graph.ingest.Ingestor;
+import com.dubsof.graph.pipeline.Progress;
 import com.dubsof.graph.util.Text;
 
 import java.sql.Connection;
@@ -292,7 +293,19 @@ public class Extractor {
      * @param llmApiKey the key the general extractor uses to ask Claude; null reads free text with rules, offline
      */
     public static Map<String, Integer> run(Connection conn, Dataset dataset, String llmApiKey) throws Exception {
-        return new Extractor(dataset, new LlmParser(llmApiKey)).extractAll(conn);
+        return run(conn, dataset, llmApiKey, (step, stage, detail) -> { });
+    }
+
+    /** As above, and reports failed Claude calls (a bad key, a rate limit) to the analysis log. */
+    public static Map<String, Integer> run(Connection conn, Dataset dataset, String llmApiKey, Progress progress) throws Exception {
+        try (LlmParser freeText = new LlmParser(llmApiKey)) {
+            Map<String, Integer> summary = new Extractor(dataset, freeText).extractAll(conn);
+            String problem = freeText.claudeProblem();
+            if (problem != null) {
+                progress.update(3, "extract", problem);
+            }
+            return summary;
+        }
     }
 
     private Map<String, Integer> extractAll(Connection conn) throws Exception {
@@ -334,6 +347,7 @@ public class Extractor {
         summary.put("mentions", mentionCount);
         summary.put("facts", factCount);
         summary.put("free_text_files", freeTextFiles.size());
+        summary.putAll(freeText.claudeSummary());
         return summary;
     }
 

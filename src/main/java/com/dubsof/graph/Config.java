@@ -34,8 +34,14 @@ public final class Config {
     public static final String OWNER = envOrNull("ERKG_OWNER");
     public static final String OWNER_DOMAIN = envOrNull("ERKG_OWNER_DOMAIN");
 
-    /** Optional: a profile.json to use instead of the one in the dataset's root folder (see dataset.Profile). */
+    /**
+     * Optional: the server's default profile, used when a dataset has no profile.json of its own and none
+     * is chosen in the Analyse dialog (see dataset.Profile).
+     */
     public static final String PROFILE = envOrNull("ERKG_PROFILE");
+
+    /** The profiles offered in the Analyse dialog (*.json). */
+    public static final File PROFILES_DIR = new File(env("ERKG_PROFILES_DIR", "profiles")).getAbsoluteFile();
 
     /** When set (Docker), the dataset picker cannot leave this folder. */
     public static final File BROWSE_ROOT = System.getenv("ERKG_BROWSE_ROOT") != null

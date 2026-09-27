@@ -17,7 +17,6 @@ import java.util.Map;
 
 /**
  * SQLite access: the schema plus a few JDBC helpers so the rest of the code can stay short.
- * Same schema as the Python version, so a graph.db built by either can be served by either.
  */
 public final class Db {
 

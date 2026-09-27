@@ -342,7 +342,7 @@ public class Ingestor {
     }
 
     static String extension(String name) {
-        int dot = name.lastIndexOf('.');   // like Python's Path.suffix: ".gitignore" has none
+        int dot = name.lastIndexOf('.');   // ".gitignore" has no extension
         return dot > 0 && dot < name.length() - 1 ? name.substring(dot).toLowerCase() : null;
     }
 }

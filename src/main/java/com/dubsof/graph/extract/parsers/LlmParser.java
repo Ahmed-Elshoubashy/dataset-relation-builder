@@ -3,6 +3,9 @@ package com.dubsof.graph.extract.parsers;
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.anthropic.core.JsonValue;
+import com.anthropic.errors.PermissionDeniedException;
+import com.anthropic.errors.RateLimitException;
+import com.anthropic.errors.UnauthorizedException;
 import com.anthropic.models.messages.ContentBlock;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
@@ -26,10 +29,13 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.dubsof.graph.extract.parsers.ParserUtils.PREFIX_TYPES;
 import static com.dubsof.graph.extract.parsers.ParserUtils.cleanPerson;
@@ -44,13 +50,19 @@ import static com.dubsof.graph.extract.parsers.ParserUtils.owner;
  * With an API key it asks Claude for them as JSON (answers cached by file content in ocr_cache.db). Without
  * one it uses FreeTextRules, which finds less but works offline. Mentions get the role "llm" or "free_text"
  * and a lower confidence than template fields, so the resolver and the UI can tell them apart.
+ *
+ * A failed Claude call (bad key, rate limit, ...) falls back to the rules for that file; the failures are
+ * counted and reported in the analysis log, so a broken key is not just "fewer mentions". Close it when
+ * extraction ends, to close the cache connection.
  */
-public class LlmParser implements Parser {
+public class LlmParser implements Parser, AutoCloseable {
 
     static final double LLM_CONFIDENCE = 0.7;
     static final double RULES_CONFIDENCE = 0.6;
     /** Longest text sent to Claude; the start of a business document holds the parties and references. */
     private static final int MAX_CHARS = 12000;
+    /** Part of the cache key: bump it whenever the question, the JSON schema or MAX_CHARS change. */
+    static final int PROMPT_VERSION = 1;
 
     /** Relations Claude may use: the ones a document can state (the derived ones are computed later). */
     private static final List<RelationType> ALLOWED_RELATIONS = Arrays.asList(
@@ -65,6 +77,14 @@ public class LlmParser implements Parser {
     private final LlmExtractionsDao llmExtractionsDao = new LlmExtractionsDao();
     /** Answers fetched by prepare(), by file sha256. */
     private final Map<String, String> answers = new ConcurrentHashMap<>();
+    /** Files whose Claude call failed in prepare(): parse() uses the rules without asking again. */
+    private final Set<String> failedFiles = ConcurrentHashMap.newKeySet();
+    /** Calls made to Claude (cached answers are not calls). */
+    private final AtomicInteger claudeCalls = new AtomicInteger();
+    /** Failed calls by kind: auth, rate_limit, other. Guarded by this. */
+    private final Map<String, Integer> claudeFailures = new TreeMap<>();
+    /** The first failure's message. Guarded by this. */
+    private String firstError;
 
     /** Offline: the rules only. */
     public LlmParser() {
@@ -73,8 +93,12 @@ public class LlmParser implements Parser {
 
     /** With a key, Claude reads the files; with null, the rules do. */
     public LlmParser(String apiKey) {
-        this.client = apiKey == null ? null
-                : AnthropicOkHttpClient.builder().fromEnv().maxRetries(4).apiKey(apiKey).build();
+        this(apiKey == null ? null : AnthropicOkHttpClient.builder().fromEnv().maxRetries(4).apiKey(apiKey).build());
+    }
+
+    /** With this client (tests point it at a fake server); null: offline. */
+    LlmParser(AnthropicClient client) {
+        this.client = client;
     }
 
     public boolean usesClaude() {
@@ -103,6 +127,8 @@ public class LlmParser implements Parser {
                         if (json != null) {
                             answers.put(sha, json);
                             save(sha, json);
+                        } else {
+                            failedFiles.add(sha);
                         }
                     }
                 });
@@ -122,7 +148,7 @@ public class LlmParser implements Parser {
         double confidence = RULES_CONFIDENCE;
         if (client != null) {
             String json = answers.containsKey(row.sha256) ? answers.get(row.sha256) : cached(row.sha256);
-            if (json == null) {
+            if (json == null && !failedFiles.contains(row.sha256)) {
                 json = askClaude(text);
                 if (json != null) {
                     save(row.sha256, json);
@@ -255,8 +281,9 @@ public class LlmParser implements Parser {
 
     // ------------------------------------------------------------------ Claude and the cache
 
-    /** Claude's JSON answer for a text, or null when the call fails (the rules are used instead). */
+    /** Claude's JSON answer for a text, or null when the call fails (counted; the rules are used instead). */
     private String askClaude(String text) {
+        claudeCalls.incrementAndGet();
         try {
             String question = "List the organisations, people, projects, documents (by their number) and products that "
                     + "this business document names, and how they relate. Use \"" + TextFindings.THIS_DOCUMENT
@@ -281,8 +308,58 @@ public class LlmParser implements Parser {
             fromJson(json.toString());   // check it parses before keeping it
             return json.toString();
         } catch (Exception e) {
+            recordFailure(e);
             return null;
         }
+    }
+
+    /** Counts a failed call by kind, and prints the first failure once (the key is never part of it). */
+    private synchronized void recordFailure(Exception e) {
+        String kind = e instanceof UnauthorizedException || e instanceof PermissionDeniedException ? "auth"
+                : e instanceof RateLimitException ? "rate_limit" : "other";
+        claudeFailures.merge(kind, 1, Integer::sum);
+        if (firstError == null) {
+            firstError = e.getClass().getSimpleName() + ": " + e.getMessage();
+            System.err.println("Claude extraction failed (" + kind + "), using the rules instead: " + firstError);
+        }
+    }
+
+    /**
+     * For the extract stage's summary: Claude calls made and failed, by kind
+     * ({@code free_text_claude_failed_auth=…}). Empty offline.
+     */
+    public synchronized Map<String, Integer> claudeSummary() {
+        Map<String, Integer> summary = new LinkedHashMap<>();
+        if (client == null) {
+            return summary;
+        }
+        summary.put("free_text_claude_calls", claudeCalls.get());
+        summary.put("free_text_claude_failed", failedCalls());
+        for (Map.Entry<String, Integer> failure : claudeFailures.entrySet()) {
+            summary.put("free_text_claude_failed_" + failure.getKey(), failure.getValue());
+        }
+        return summary;
+    }
+
+    /** A line for the analysis log when Claude calls failed, with the first error; null when none did. */
+    public synchronized String claudeProblem() {
+        int failed = failedCalls();
+        if (failed == 0) {
+            return null;
+        }
+        if (failed == claudeCalls.get()) {
+            return "Claude extraction failed for all " + failed + " files: " + firstError + "; used rules instead";
+        }
+        return "Claude extraction failed for " + failed + " of " + claudeCalls.get() + " files (first error: "
+                + firstError + "); used rules for those";
+    }
+
+    private int failedCalls() {
+        int failed = 0;
+        for (int count : claudeFailures.values()) {
+            failed += count;
+        }
+        return failed;
     }
 
     /** Low effort, and the answer must match a JSON schema limited to our entity and relation types. */
@@ -350,7 +427,7 @@ public class LlmParser implements Parser {
 
     private synchronized String cached(String sha) {
         try {
-            return llmExtractionsDao.findJson(cache(), sha, Config.CLAUDE_MODEL);
+            return llmExtractionsDao.findJson(cache(), sha, Config.CLAUDE_MODEL, PROMPT_VERSION);
         } catch (Exception e) {
             return null;
         }
@@ -358,17 +435,27 @@ public class LlmParser implements Parser {
 
     private synchronized void save(String sha, String json) {
         try {
-            llmExtractionsDao.save(cache(), sha, Config.CLAUDE_MODEL, json);
+            llmExtractionsDao.save(cache(), sha, Config.CLAUDE_MODEL, PROMPT_VERSION, json);
         } catch (Exception e) {
             // not cached: the next build asks again
         }
     }
 
+    /** ocr_cache.db, opened on first use (offline, never). */
     private Connection cache() throws Exception {
         if (cache == null) {
             cache = Db.open(Config.OCR_CACHE_FILE, true);
             llmExtractionsDao.createTable(cache);
         }
         return cache;
+    }
+
+    /** Closes the cache connection, if it was opened. */
+    @Override
+    public synchronized void close() throws Exception {
+        if (cache != null) {
+            cache.close();
+            cache = null;
+        }
     }
 }

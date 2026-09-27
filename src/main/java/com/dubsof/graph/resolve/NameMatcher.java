@@ -28,6 +28,7 @@ import java.util.regex.Pattern;
  *   expansion     'Sterling Pharmaceuticals' ~ 'Sterling Pharma'              0.85 per word
  *   typo          'Blenhiem Foods'           ~ 'Blenheim Foods'               0.85 per word (0.75 for 2 letters)
  *   truncation    'Falcon Aerospace'         ~ 'Falcon Aerospace Components'  -0.08 per missing word
+ *                 'Whitmore Dairy Products'  ~ 'Whitmore Dairy'               -0.08 per extra word (2+ word names)
  *   acronym       'BFG Ltd'                  ~ 'Blenheim Foods Group'         0.85
  *   email_domain  'falconaero.co.uk'         ~ 'Falcon Aerospace Components'  0.92
  * </pre>
@@ -79,7 +80,10 @@ public final class NameMatcher {
             EXPANSION,
             /** One or two letters wrong ("Blenhiem" ~ "Blenheim"). */
             TYPO,
-            /** The candidate has extra words at the end ("Falcon Aerospace" ~ "Falcon Aerospace Components"). */
+            /**
+             * One name is the other plus words at the end: "Falcon Aerospace" ~ "Falcon Aerospace Components",
+             * and the other way round when the shorter one has at least two words ("Whitmore Dairy Products" ~ "Whitmore Dairy").
+             */
             TRUNCATION,
             /** An e-mail domain made of the candidate's words ("falconaero.co.uk"). */
             EMAIL_DOMAIN,
@@ -193,7 +197,10 @@ public final class NameMatcher {
         if (firstMentionWord.charAt(0) != candidateWords.get(0).charAt(0)) {
             return null;
         }
-        Alignment alignment = align(mentionWords, candidateWords, truncated);
+        // a mention may say more than the candidate ("Whitmore Dairy Products" ~ "Whitmore Dairy") only when
+        // the candidate has two words or more: "Acme Robotics" is not simply more words about "Acme"
+        boolean mentionMayBeLonger = candidateWords.size() >= 2;
+        Alignment alignment = align(mentionWords, candidateWords, truncated, mentionMayBeLonger);
         if (alignment == null) {
             return null;
         }
@@ -203,6 +210,20 @@ public final class NameMatcher {
             return new Match(score, Match.Method.NORMALIZED);
         }
         return new Match(score, alignment.methods);
+    }
+
+    /**
+     * How well a spelling found in a file supports {@code name} as the company's name, 0..1: the match score,
+     * except that a longer spelling never supports a shorter name. "Whitmore Dairy Products" matches
+     * "Whitmore Dairy" as a truncation, but it says the name has more words, not fewer.
+     */
+    public double supportsName(String spelling, String name) {
+        Match match = matchCompany(spelling, name, false);
+        if (match == null) {
+            return 0;
+        }
+        boolean spellingIsLonger = companyWords(spelling, false).size() > companyWords(name, false).size();
+        return match.methods.contains(Match.Method.TRUNCATION) && spellingIsLonger ? 0 : match.score;
     }
 
     /** How the mention's words line up with the candidate's words: a score and the rules that were needed. */
@@ -222,7 +243,8 @@ public final class NameMatcher {
      * when there is none. Works from the first word on: it matches the first word(s) of each side,
      * then aligns the rest the same way (recursion), and keeps the best-scoring option.
      */
-    private static Alignment align(List<String> mentionWords, List<String> candidateWords, boolean truncated) {
+    private static Alignment align(List<String> mentionWords, List<String> candidateWords, boolean truncated,
+                                   boolean mentionMayBeLonger) {
         // All mention words are used. Candidate words left over mean the mention is a truncation.
         if (mentionWords.isEmpty()) {
             Set<Match.Method> methods = EnumSet.noneOf(Match.Method.class);
@@ -232,8 +254,12 @@ public final class NameMatcher {
             return new Alignment(1.0 - TRUNCATION_PENALTY_PER_WORD * candidateWords.size(), methods);
         }
         // Mention words are left but the candidate has none: the mention says more than the candidate.
+        // Allowed with the same penalty per extra word, when the candidate is long enough to be a name of its own.
         if (candidateWords.isEmpty()) {
-            return null;
+            if (!mentionMayBeLonger) {
+                return null;
+            }
+            return new Alignment(1.0 - TRUNCATION_PENALTY_PER_WORD * mentionWords.size(), EnumSet.of(Match.Method.TRUNCATION));
         }
 
         // How many words each side uses in this step:
@@ -269,7 +295,7 @@ public final class NameMatcher {
             }
 
             Alignment rest = align(mentionWords.subList(mentionWordsUsed, mentionWords.size()),
-                    candidateWords.subList(candidateWordsUsed, candidateWords.size()), truncated);
+                    candidateWords.subList(candidateWordsUsed, candidateWords.size()), truncated, mentionMayBeLonger);
             if (rest == null) {
                 continue;
             }
@@ -380,6 +406,8 @@ public final class NameMatcher {
     /**
      * Company names in running text: runs of capitalised words ending in a legal suffix, e.g. "Mueller GmbH"
      * in "Spoke with José Müller from Mueller GmbH about ...". A leading "The" / "Our" is not part of the name.
+     * A sentence's first word is capitalised anyway, so "Ask Harbor Robotics Inc for ..." loses "Ask" when the
+     * text also names "Harbor Robotics Inc" elsewhere; "Harbor Robotics Inc will quote" keeps its first word.
      */
     public List<String> findCompanyNames(String text) {
         List<String> names = new ArrayList<>();
@@ -388,11 +416,43 @@ public final class NameMatcher {
             // a trailing "." may just end the sentence; names are compared without punctuation anyway
             String name = m.group(1).trim().replaceFirst("\\.$", "")
                     .replaceFirst("^(?:The|Our|Your|Dear|Hi|Hello|Attn|From|To|With|For|And)\\s+", "");
+            String rest = withoutFirstWord(name);
+            if (rest != null && startsSentence(text, m.start(1)) && namedElsewhere(text, rest, name)) {
+                name = rest;
+            }
             if (name.contains(" ")) {   // at least one word besides the suffix
                 names.add(name);
             }
         }
         return names;
+    }
+
+    /** "Ask Harbor Robotics Inc" -> "Harbor Robotics Inc"; null when that would leave only the suffix. */
+    public static String withoutFirstWord(String name) {
+        int space = name.indexOf(' ');
+        String rest = space < 0 ? null : name.substring(space + 1).trim();
+        return rest != null && rest.contains(" ") ? rest : null;
+    }
+
+    /** True when only spaces stand between {@code position} and the text's start, a line start, or a '.', '!', '?'. */
+    private static boolean startsSentence(String text, int position) {
+        int i = position - 1;
+        while (i >= 0 && (text.charAt(i) == ' ' || text.charAt(i) == '\t')) {
+            i--;
+        }
+        return i < 0 || "\n.!?".indexOf(text.charAt(i)) >= 0;
+    }
+
+    /** True when {@code rest} appears in the text other than as the end of {@code name}. */
+    private static boolean namedElsewhere(String text, String rest, String name) {
+        int inName = name.length() - rest.length();
+        for (int at = text.indexOf(rest); at >= 0; at = text.indexOf(rest, at + 1)) {
+            boolean partOfName = at >= inName && text.startsWith(name, at - inName);
+            if (!partOfName) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** \b(Capitalised words... Suffix)\b, where the suffix starts with a capital ("GmbH", "Inc", "Ltd."). */
@@ -419,6 +479,15 @@ public final class NameMatcher {
     public static String personKey(String name) {
         String cleaned = plainLetters(name).toLowerCase().replace('’', '\'').replaceAll("[^a-z' -]", "");
         return cleaned.replaceAll("\\s+", " ").trim();
+    }
+
+    /**
+     * The person key with spelled-out umlauts folded back to one letter: "jose mueller" -> "jose muller".
+     * A second key to look people up by, so "Müller", "Mueller" and "Muller" meet. Only a fallback for an
+     * exact key, as it also folds names that simply contain these letters ("michael" -> "michal").
+     */
+    public static String personKeyFolded(String personKey) {
+        return personKey.replace("ae", "a").replace("oe", "o").replace("ue", "u");
     }
 
     /**
