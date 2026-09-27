@@ -37,6 +37,10 @@ The left list shows every entity by type, most connected first. Clicking one cen
 - **Why two entities are linked.** Clicking an edge shows the relation in the details panel: the files
   that state it, and how each end is written in each file ("ACME Corp" as bill-to, matched by
   `normalized`). A derived link shows its rule and the documents it was inferred from instead.
+- **How two entities are connected.** "Find connection…" in the details panel picks a second entity and
+  draws only the shortest paths between the two (up to 4 links, at most 5 paths; with or without
+  derived links, as the toggle says), listed step by step; clicking a step shows its evidence. The
+  owner is never a step in between: it is linked to nearly everything.
 - **Each link once.** A file's free text (e-mail body, signature) does not add a `MENTIONS` link to
   someone the file's template already linked ("Dana Price SENT the e-mail" is not also "the e-mail
   MENTIONS Dana Price").

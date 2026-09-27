@@ -81,6 +81,8 @@ public class GraphQueries {
                     + " ORDER BY CASE MIN(e.etype) WHEN 'project' THEN 0 WHEN 'company' THEN 1 WHEN 'product' THEN 2"
                     + "   WHEN 'person' THEN 3 ELSE 4 END, MAX(r.weight) DESC, other LIMIT ?";
     private static final String RELATION_BY_ID = "SELECT * FROM relations WHERE id = ?";
+    private static final String OWNERS = "SELECT * FROM entities WHERE etype = 'company' AND json_extract(attrs, '$.role') = 'owner'";
+    private static final String ALL_RELATIONS = "SELECT * FROM relations WHERE (? OR derived = 0) ORDER BY id";
     /** The files behind a relation, each with the mentions of the relation's two ends in it. */
     private static final String RELATION_EVIDENCE =
             "SELECT f.id AS file_id, f.path, f.kind, f.status, m.entity_id, m.surface, m.role, m.method, m.confidence"
@@ -175,6 +177,16 @@ public class GraphQueries {
             throws SQLException {
         return Db.list(conn, NEIGHBOUR_RELATIONS, GraphQueries::mapNeighbour,
                 entityId, entityId, entityId, entityId, includeDerived ? 1 : 0, Json.write(types));
+    }
+
+    /** The owner company (none, or one). */
+    public List<EntityRow> findOwners(Connection conn) throws SQLException {
+        return Db.list(conn, OWNERS, EntitiesDao::map);
+    }
+
+    /** Every relation (stated only, or derived too): the whole graph, for path finding. */
+    public List<RelationRow> findAllRelations(Connection conn, boolean includeDerived) throws SQLException {
+        return Db.list(conn, ALL_RELATIONS, RelationsDao::map, includeDerived ? 1 : 0);
     }
 
     public RelationRow findRelation(Connection conn, long id) throws SQLException {

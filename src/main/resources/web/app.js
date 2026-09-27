@@ -255,6 +255,7 @@ function renderDetails(e) {
     <div class="d-sub">${esc(sub || "")}</div>
     <div class="d-actions">
       <button class="btn" data-center="${e.id}">Center graph here</button>
+      <button class="btn" data-connect="${e.id}">Find connection…</button>
       <span class="stat" title="relationships"><b>${e.degree}</b> links</span>
       <span class="stat" title="references across files"><b>${e.sources.length}</b> mentions</span>
     </div>`;
@@ -311,12 +312,98 @@ function renderDetails(e) {
     }
     const c = ev.target.closest("[data-center]");
     if (c) return loadGraph(+c.dataset.center);
+    const k = ev.target.closest("[data-connect]");
+    if (k) return openConnectionPicker(e);
     const chip = ev.target.closest("[data-id]");
     if (chip) return select(+chip.dataset.id);
     const f = ev.target.closest("[data-file]");
     if (f) return openFile(+f.dataset.file, e);
   };
 }
+/* ------------------------------------------------------------ find the connection between two entities */
+/** A search box at the top of the details panel: pick the entity to connect {@code from} to. */
+function openConnectionPicker(from) {
+  const panel = $("#details");
+  panel.querySelector(".connect-picker")?.remove();
+  const box = document.createElement("div");
+  box.className = "connect-picker";
+  box.innerHTML = `<div class="rel-label">How is <b>${esc(from.name)}</b> connected to…</div>
+    <input type="search" placeholder="Search a second entity…" autocomplete="off">
+    <div class="connect-results"></div>`;
+  panel.prepend(box);
+  panel.scrollTop = 0;
+  const input = box.querySelector("input");
+  const results = box.querySelector(".connect-results");
+  let timer;
+  input.oninput = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = input.value.trim();
+      if (!q) { results.innerHTML = ""; return; }
+      const res = await api(`/api/entities?q=${encodeURIComponent(q)}&limit=12`);
+      results.innerHTML = res.items.filter((e) => e.id !== from.id).map(itemHtml).join("") || `<div class="list-footer">No matches</div>`;
+    }, 180);
+  };
+  results.onclick = (ev) => {
+    ev.stopPropagation();
+    const it = ev.target.closest("[data-id]");
+    if (it) showConnection(from.id, +it.dataset.id);
+  };
+  input.focus();
+}
+/** Draws only the shortest paths between the two, and lists them; every edge can be clicked for its evidence. */
+async function showConnection(from, to) {
+  const c = await api(`/api/connection?from=${from}&to=${to}&derived=${state.derived}`);
+  state.center = null;
+  $("#not-drawn").hidden = true;
+  cy.elements().remove();
+  cy.add([
+    ...c.nodes.map((n) => ({ group: "nodes", data: nodeData(n) })),
+    ...c.edges.map((e) => ({ group: "edges", data: { id: `e${e.id}`, source: String(e.src), target: String(e.dst), rel: e.rel.replaceAll("_", " ").toLowerCase(), derived: !!e.derived || undefined, width: Math.min(6, 0.8 + Math.log2(e.weight + 1) * 0.8) } })),
+  ]);
+  cy.getElementById(String(from)).addClass("center");
+  cy.getElementById(String(to)).addClass("center");
+  cy.layout({ name: "breadthfirst", roots: [String(from)], directed: false, spacingFactor: 1.3, fit: true, padding: 60, animate: false }).run();
+  renderConnection(c);
+  $("#details").classList.add("open");
+}
+function renderConnection(c) {
+  const byId = Object.fromEntries(c.nodes.map((n) => [n.id, n]));
+  const label = (e) => (e.type === "document" && !e.key.includes(":") ? e.key.split("@")[0] : e.name);
+  const chip = (e) => `<span class="chip" data-id="${e.id}" title="${esc(e.name)}"><span class="dot ${e.type}"></span><span class="nm">${esc(label(e))}</span></span>`;
+  let h = `<div class="d-type">connection</div>
+    <div class="rel-line">${chip(byId[c.from])}<span class="rel-arrow">↔</span>${chip(byId[c.to])}</div>`;
+  if (!c.paths.length) {
+    h += `<p class="rule">No connection within ${c.max_hops} links${c.avoided.length ? ` (not counting links through ${esc(c.avoided.join(", "))}, which is linked to nearly everything)` : ""}.</p>`;
+  } else {
+    h += `<div class="d-actions"><span class="stat"><b>${c.hops}</b> ${c.hops === 1 ? "link" : "links"} apart</span>
+      <span class="stat"><b>${c.paths.length}</b> shortest ${c.paths.length === 1 ? "path" : "paths"}${c.paths.length >= 5 ? " shown" : ""}</span></div>
+      <div class="section"><h4>Paths <span class="n">click a step for its evidence</span></h4>`;
+    for (const p of c.paths) {
+      let at = c.from;
+      let row = chip(byId[at]);
+      for (const s of p.steps) {
+        const forward = s.src === at;
+        const next = forward ? s.dst : s.src;
+        const rel = (REL[s.rel] || [s.rel, s.rel])[forward ? 0 : 1].toLowerCase();
+        row += `<button class="step" data-rel="${s.id}" title="why?">${forward ? "" : "← "}${esc(rel)}${forward ? " →" : ""}</button>${chip(byId[next])}`;
+        at = next;
+      }
+      h += `<div class="path">${row}</div>`;
+    }
+    h += `</div>`;
+    if (c.avoided.length) h += `<p class="note-small">Paths through ${esc(c.avoided.join(", "))} are not counted: it is linked to nearly everything.</p>`;
+  }
+  $("#details").innerHTML = h;
+  $("#details").scrollTop = 0;
+  $("#details").onclick = (ev) => {
+    const step = ev.target.closest("[data-rel]");
+    if (step) return selectRelation(+step.dataset.rel);
+    const chipEl = ev.target.closest("[data-id]");
+    if (chipEl) return select(+chipEl.dataset.id);
+  };
+}
+
 /* ------------------------------------------------------------ relation details (a click on an edge) */
 async function selectRelation(id) {
   state.selected = null;

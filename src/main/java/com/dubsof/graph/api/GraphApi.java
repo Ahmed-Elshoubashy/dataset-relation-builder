@@ -23,6 +23,8 @@ import com.dubsof.graph.extract.RelationType;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -233,6 +235,120 @@ public class GraphApi {
         out.put("via", via);
         out.put("rule", derivationRule(r.rel));
         return out;
+    }
+
+    /**
+     * How two entities are connected: the shortest paths between them (up to CONNECTION_MAX_HOPS relations,
+     * at most CONNECTION_MAX_PATHS of them), for "Find connection". The owner is never a step in between: it is
+     * linked to nearly everything, so "both are linked to the owner" says nothing. Each path is a list of
+     * relations, so every step can be explained like any other link.
+     */
+    public Map<String, Object> connection(long from, long to, boolean derived) throws Exception {
+        EntityRow fromEntity = entitiesDao.findById(conn, from);
+        EntityRow toEntity = entitiesDao.findById(conn, to);
+        if (fromEntity == null || toEntity == null) {
+            throw new ApiServer.ApiException(404, "Not Found");
+        }
+        // the graph, both directions: entity -> its relations
+        Map<Long, List<RelationRow>> links = new HashMap<Long, List<RelationRow>>();
+        for (RelationRow r : graphQueries.findAllRelations(conn, derived)) {
+            links.computeIfAbsent(r.src, id -> new ArrayList<RelationRow>()).add(r);
+            links.computeIfAbsent(r.dst, id -> new ArrayList<RelationRow>()).add(r);
+        }
+        Set<Long> avoided = new HashSet<Long>();
+        for (EntityRow owner : graphQueries.findOwners(conn)) {
+            if (owner.id != from && owner.id != to) {
+                avoided.add(owner.id);
+            }
+        }
+
+        // breadth first from "from", keeping every relation that reaches a node at its shortest distance
+        Map<Long, Integer> distance = new HashMap<Long, Integer>();
+        Map<Long, List<RelationRow>> reachedBy = new HashMap<Long, List<RelationRow>>();
+        distance.put(from, 0);
+        List<Long> frontier = new ArrayList<Long>();
+        frontier.add(from);
+        for (int hop = 1; hop <= Config.CONNECTION_MAX_HOPS && !frontier.isEmpty() && !distance.containsKey(to); hop++) {
+            List<Long> next = new ArrayList<Long>();
+            for (Long node : frontier) {
+                for (RelationRow r : links.getOrDefault(node, new ArrayList<RelationRow>())) {
+                    long other = r.src == node ? r.dst : r.src;
+                    if (avoided.contains(other)) {
+                        continue;
+                    }
+                    Integer known = distance.get(other);
+                    if (known == null) {
+                        distance.put(other, hop);
+                        next.add(other);
+                    }
+                    if (known == null || known == hop) {
+                        reachedBy.computeIfAbsent(other, id -> new ArrayList<RelationRow>()).add(r);
+                    }
+                }
+            }
+            frontier = next;
+        }
+
+        List<List<RelationRow>> paths = new ArrayList<List<RelationRow>>();
+        if (distance.containsKey(to) && to != from) {
+            collectPaths(to, from, reachedBy, new ArrayList<RelationRow>(), paths);
+        }
+        Set<Long> nodeIds = new LinkedHashSet<Long>();
+        nodeIds.add(from);
+        nodeIds.add(to);
+        List<Map<String, Object>> pathMaps = new ArrayList<Map<String, Object>>();
+        Map<Long, Map<String, Object>> edges = new LinkedHashMap<Long, Map<String, Object>>();
+        for (List<RelationRow> path : paths) {
+            List<Map<String, Object>> steps = new ArrayList<Map<String, Object>>();
+            for (RelationRow r : path) {
+                nodeIds.add(r.src);
+                nodeIds.add(r.dst);
+                steps.add(relationMap(r));
+                edges.put(r.id, relationMap(r));
+            }
+            pathMaps.add(Collections.<String, Object>singletonMap("steps", steps));
+        }
+        List<Map<String, Object>> nodeMaps = new ArrayList<Map<String, Object>>();
+        for (EntityRow e : graphQueries.findEntitiesWithDegree(conn, nodeIds)) {
+            nodeMaps.add(summary(e));
+        }
+        Map<String, Object> out = new LinkedHashMap<String, Object>();
+        out.put("from", from);
+        out.put("to", to);
+        out.put("hops", paths.isEmpty() ? null : paths.get(0).size());
+        out.put("max_hops", Config.CONNECTION_MAX_HOPS);
+        out.put("paths", pathMaps);
+        out.put("nodes", nodeMaps);
+        out.put("edges", new ArrayList<Map<String, Object>>(edges.values()));
+        List<String> avoidedNames = new ArrayList<String>();
+        for (Long id : avoided) {
+            avoidedNames.add(entitiesDao.findById(conn, id).name);
+        }
+        out.put("avoided", avoidedNames);
+        return out;
+    }
+
+    /**
+     * Walks back from {@code node} to {@code start} along the relations that reached each node first, adding
+     * every complete path (in order from start) until CONNECTION_MAX_PATHS are found.
+     */
+    private static void collectPaths(long node, long start, Map<Long, List<RelationRow>> reachedBy, List<RelationRow> tail,
+                                     List<List<RelationRow>> paths) {
+        if (paths.size() >= Config.CONNECTION_MAX_PATHS) {
+            return;
+        }
+        if (node == start) {
+            List<RelationRow> path = new ArrayList<RelationRow>(tail);
+            Collections.reverse(path);
+            paths.add(path);
+            return;
+        }
+        for (RelationRow r : reachedBy.getOrDefault(node, new ArrayList<RelationRow>())) {
+            long previous = r.src == node ? r.dst : r.src;
+            tail.add(r);
+            collectPaths(previous, start, reachedBy, tail, paths);
+            tail.remove(tail.size() - 1);
+        }
     }
 
     /** How a derived relation is inferred, in words; null for a relation stated in files. */

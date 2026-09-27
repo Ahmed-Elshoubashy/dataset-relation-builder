@@ -169,6 +169,14 @@ table.items th, table.items td { text-align: left; padding: 4px 6px; border-bott
 table.items td.num, table.items th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .rel-group { margin-bottom: 10px; }
+.connect-picker { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 10px; margin-bottom: 12px; display: grid; gap: 8px; }
+.connect-picker input { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); font: inherit; font-size: 13px; }
+.connect-results { max-height: 260px; overflow: auto; background: var(--panel); border-radius: 8px; }
+.path { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.path:last-child { border-bottom: 0; }
+.step { border: 0; background: none; color: var(--accent); font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.step:hover { background: var(--accent-soft); }
+.note-small { font-size: 12px; color: var(--muted); margin-top: 8px; }
 .rel-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 10px; }
 .rel-arrow { font-size: 12.5px; color: var(--muted); }
 .rule { font-size: 13px; color: var(--muted); margin: 0 0 8px; }

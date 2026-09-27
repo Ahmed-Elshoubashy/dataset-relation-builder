@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -256,6 +257,33 @@ class GenericDatasetTest {
             via.add(((Map<?, ?>) document).get("key"));
         }
         assertEquals(Arrays.asList("HR-1040", "HR-1043"), via);
+    }
+
+    @Test
+    void twoEntitiesAreConnectedByTheirShortestPaths() throws Exception {
+        // José Müller (a customer) and Ana Ruiz (another customer) both write to Dana Price
+        long jose = Db.number(conn, "SELECT id FROM entities WHERE etype = 'person' AND name = 'José Müller'");
+        long ana = Db.number(conn, "SELECT id FROM entities WHERE etype = 'person' AND name = 'Ana Ruiz'");
+        long owner = Db.number(conn, "SELECT id FROM entities WHERE json_extract(attrs, '$.role') = 'owner'");
+        Map<String, Object> connection = new GraphApi(conn).connection(jose, ana, true);
+
+        List<?> paths = (List<?>) connection.get("paths");
+        assertFalse(paths.isEmpty(), "a path");
+        for (Object path : paths) {
+            long at = jose;
+            List<?> steps = (List<?>) ((Map<?, ?>) path).get("steps");
+            assertEquals(connection.get("hops"), steps.size(), "all paths are shortest");
+            for (Object step : steps) {
+                Map<?, ?> s = (Map<?, ?>) step;
+                long src = ((Number) s.get("src")).longValue();
+                long dst = ((Number) s.get("dst")).longValue();
+                assertTrue(src == at || dst == at, "each step starts where the last one ended");
+                at = src == at ? dst : src;
+                assertTrue(at != owner || at == ana, "never through the owner");
+            }
+            assertEquals(ana, at, "ends at Ana Ruiz");
+        }
+        assertEquals(Arrays.asList("Harbor Robotics Inc"), connection.get("avoided"));
     }
 
     @Test

@@ -148,6 +148,9 @@ public final class Config {
     public static final int GRAPH_DEFAULT_NODES = 70;
     public static final int GRAPH_MAX_NODES = 600;
     public static final int GRAPH_MAX_DEPTH = 2;
+    /** "Find connection": the longest path searched between two entities, and how many shortest paths are shown. */
+    public static final int CONNECTION_MAX_HOPS = 4;
+    public static final int CONNECTION_MAX_PATHS = 5;
     /** Evidence files listed in an entity's details panel. */
     public static final int MAX_EVIDENCE_FILES_SHOWN = 400;
 

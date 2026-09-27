@@ -150,6 +150,12 @@ public class ApiServer {
             if (file.matches()) {
                 return api.file(Long.parseLong(file.group(1)));
             }
+            if (path.equals("/api/connection")) {
+                if (!String.valueOf(q.get("from")).matches("\\d+") || !String.valueOf(q.get("to")).matches("\\d+")) {
+                    throw new ApiException(400, "from and to must be entity ids");
+                }
+                return api.connection(Long.parseLong(q.get("from")), Long.parseLong(q.get("to")), !"false".equals(q.get("derived")));
+            }
             Matcher relation = RELATION.matcher(path);
             if (relation.matches()) {
                 return api.relation(Long.parseLong(relation.group(1)));
