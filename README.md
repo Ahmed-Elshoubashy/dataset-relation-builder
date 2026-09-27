@@ -156,6 +156,9 @@ docker compose up -d --build        # http://localhost:8766
 | 5 relate | `relate.Relator` | facts become relations with evidence files; derived links; consistency checks |
 | serve | `api.ApiServer`, `api.GraphApi`, `api.AnalysisApi` | JDK `HttpServer`: explorer API, "Analyse dataset" runner, static UI |
 
+The HTTP API (every endpoint, its parameters, request body and response) is documented in
+[docs/API.md](docs/API.md).
+
 ## Java version and style
 
 Targets **Java 21** (`options.release = 21`), but the code is written in plain **Java 8-style syntax**
