@@ -34,6 +34,9 @@ The left list shows every entity by type, most connected first. Clicking one cen
   dropped silently: it becomes one dashed group node per relation and type next to the centre, and a
   "Not drawn" bar under the graph ("178 documents · issued to", "73 people · works for"). Clicking either
   opens that group in the details panel, with every entry listed.
+- **Why two entities are linked.** Clicking an edge shows the relation in the details panel: the files
+  that state it, and how each end is written in each file ("ACME Corp" as bill-to, matched by
+  `normalized`). A derived link shows its rule and the documents it was inferred from instead.
 - **Each link once.** A file's free text (e-mail body, signature) does not add a `MENTIONS` link to
   someone the file's template already linked ("Dana Price SENT the e-mail" is not also "the e-mail
   MENTIONS Dana Price").

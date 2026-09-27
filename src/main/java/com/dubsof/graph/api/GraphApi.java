@@ -10,6 +10,7 @@ import com.dubsof.graph.dao.MetaDao;
 import com.dubsof.graph.dao.RelationsDao;
 import com.dubsof.graph.dao.row.AliasRow;
 import com.dubsof.graph.dao.row.EntityRow;
+import com.dubsof.graph.dao.row.EvidenceRow;
 import com.dubsof.graph.dao.row.FileMentionRow;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.dao.row.NeighbourRow;
@@ -182,6 +183,70 @@ public class GraphApi {
         }
         hidden.sort((a, b) -> Integer.compare((Integer) b.get("count"), (Integer) a.get("count")));
         return hidden;
+    }
+
+    /**
+     * Why two entities are linked, for a click on an edge: the relation, its two ends, and the evidence. A stated
+     * relation lists the files that state it, with how each end is written there ("ACME Corp" as bill_to); a derived
+     * one (INVOLVED_IN, ...) has no files of its own, so it lists the documents it was inferred from and the rule.
+     */
+    public Map<String, Object> relation(long id) throws Exception {
+        RelationRow r = graphQueries.findRelation(conn, id);
+        if (r == null) {
+            throw new ApiServer.ApiException(404, "Not Found");
+        }
+        Map<String, Object> out = relationMap(r);
+        out.put("src_entity", summary(entitiesDao.findById(conn, r.src)));
+        out.put("dst_entity", summary(entitiesDao.findById(conn, r.dst)));
+
+        // one entry per file, with the mentions of both ends in it
+        Map<Long, Map<String, Object>> files = new LinkedHashMap<Long, Map<String, Object>>();
+        for (EvidenceRow row : graphQueries.findRelationEvidence(conn, id, Config.MAX_EVIDENCE_FILES_SHOWN)) {
+            Map<String, Object> file = files.get(row.fileId);
+            if (file == null) {
+                file = new LinkedHashMap<String, Object>();
+                file.put("id", row.fileId);
+                file.put("path", row.path);
+                file.put("kind", row.kind);
+                file.put("status", row.status);
+                file.put("mentions", new ArrayList<Map<String, Object>>());
+                files.put(row.fileId, file);
+            }
+            if (row.entityId != null) {
+                Map<String, Object> mention = new LinkedHashMap<String, Object>();
+                mention.put("entity_id", row.entityId);
+                mention.put("surface", row.surface);
+                mention.put("role", row.role);
+                mention.put("method", row.method);
+                mention.put("confidence", row.confidence);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> mentions = (List<Map<String, Object>>) file.get("mentions");
+                mentions.add(mention);
+            }
+        }
+        out.put("evidence", new ArrayList<Map<String, Object>>(files.values()));
+
+        List<Map<String, Object>> via = new ArrayList<Map<String, Object>>();
+        for (EntityRow document : graphQueries.findDerivedVia(conn, r, Config.MAX_EVIDENCE_FILES_SHOWN)) {
+            via.add(summary(document));
+        }
+        out.put("via", via);
+        out.put("rule", derivationRule(r.rel));
+        return out;
+    }
+
+    /** How a derived relation is inferred, in words; null for a relation stated in files. */
+    private static String derivationRule(RelationType rel) {
+        if (rel == RelationType.INVOLVED_IN) {
+            return "The person authored, sent or received these documents of the project.";
+        }
+        if (rel == RelationType.USES_PRODUCT) {
+            return "These documents of the project list or describe the product.";
+        }
+        if (rel == RelationType.PURCHASED_OR_QUOTED) {
+            return "These documents issued to the company list the product.";
+        }
+        return null;
     }
 
     /** Probable aliases/abbreviations of whatever entity best matches q (for a future chat/MCP layer). */

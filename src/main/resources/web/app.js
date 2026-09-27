@@ -92,12 +92,21 @@ function initGraph() {
           "target-arrow-shape": "triangle", "target-arrow-color": css("--border"), "arrow-scale": 0.7, opacity: 0.9,
       } },
       { selector: "edge[?derived]", style: { "line-style": "dashed" } },
+      { selector: "edge:selected", style: { "line-color": css("--accent"), "target-arrow-color": css("--accent"), width: 3, label: "data(rel)", "font-size": 10, color: css("--text"), "text-rotation": "autorotate", "text-outline-color": css("--bg"), "text-outline-width": 2, "z-index": 10 } },
       { selector: "edge.hl", style: { "line-color": css("--accent"), "target-arrow-color": css("--accent"), label: "data(rel)", "font-size": 9, color: css("--muted"), "text-rotation": "autorotate", "text-outline-color": css("--bg"), "text-outline-width": 2, "z-index": 9 } },
       { selector: ".faded", style: { opacity: 0.15 } },
     ],
   });
   cy.on("tap", "node", (e) => (e.target.data("group") ? openGroup(e.target.data()) : select(+e.target.id(), { recenter: false })));
   cy.on("dbltap", "node", (e) => { if (!e.target.data("group")) expand(+e.target.id()); });
+  // an edge: why the two ends are linked (group edges stand for many links: open the group instead)
+  cy.on("tap", "edge", (e) => {
+    const id = e.target.id();
+    if (id.startsWith("emore:")) return openGroup(cy.getElementById(id.slice(1)).data());
+    selectRelation(+id.slice(1));
+  });
+  cy.on("mouseover", "edge", (e) => e.target.addClass("hl"));
+  cy.on("mouseout", "edge", (e) => { if (!e.target.selected()) e.target.removeClass("hl"); });
   cy.on("mouseover", "node", (e) => highlight(e.target));
   cy.on("mouseout", "node", () => cy.elements().removeClass("faded hl"));
 }
@@ -306,6 +315,44 @@ function renderDetails(e) {
     if (chip) return select(+chip.dataset.id);
     const f = ev.target.closest("[data-file]");
     if (f) return openFile(+f.dataset.file, e);
+  };
+}
+/* ------------------------------------------------------------ relation details (a click on an edge) */
+async function selectRelation(id) {
+  state.selected = null;
+  cy.$(":selected").unselect();
+  cy.getElementById(`e${id}`).select();
+  renderRelation(await api(`/api/relations/${id}`));
+  $("#details").classList.add("open");
+}
+/** "Acme Corporation ← issued to — INV-8034", then why: the files that state it, or for a derived link the rule and its documents. */
+function renderRelation(r) {
+  const chip = (e) => `<span class="chip" data-id="${e.id}" title="${esc(e.name)}"><span class="dot ${e.type}"></span><span class="nm">${esc(e.type === "document" && !e.key.includes(":") ? e.key.split("@")[0] : e.name)}</span></span>`;
+  const relLabel = (REL[r.rel] || [r.rel])[0].toLowerCase();
+  const names = { [r.src]: r.src_entity, [r.dst]: r.dst_entity };
+  let h = `<div class="d-type">relationship</div>
+    <div class="rel-line">${chip(r.src_entity)}<span class="rel-arrow">${esc(relLabel)} →</span>${chip(r.dst_entity)}</div>
+    <div class="d-actions">
+      ${r.derived ? `<span class="derived" title="inferred from other links">derived</span>` : `<span class="stat"><b>${r.weight}</b> ${r.weight === 1 ? "file states it" : "files state it"}</span>`}
+    </div>`;
+  if (r.derived) {
+    h += `<div class="section"><h4>Why <span class="n">${r.via.length} documents</span></h4>
+      <p class="rule">${esc(r.rule || "Inferred from other links.")}</p>
+      <div class="rel-targets">${r.via.map(chip).join("")}</div></div>`;
+  } else {
+    h += `<div class="section"><h4>Evidence <span class="n">${r.evidence.length} files</span></h4>` +
+      r.evidence.map((f) => `<div class="src" data-file="${f.id}"><span class="kind">${esc(f.kind)}</span>
+        <div><div class="p">${esc(f.path.replaceAll("::", " ▸ "))}</div>
+        ${f.mentions.map((m) => `<div class="m"><span class="dot ${names[m.entity_id]?.type}" style="display:inline-block;width:7px;height:7px;border-radius:50%"></span>
+          ${esc(names[m.entity_id]?.name || "")} as “${esc(m.surface)}” · <span title="${esc(METHOD_HELP[m.role] || "")}">${esc(m.role.replaceAll("_", " "))}</span>${m.method && m.method !== m.role ? ` · <span title="${esc(METHOD_HELP[m.method.split(":").pop().split("+")[0]] || "")}">${esc(m.method)}</span>` : ""}</div>`).join("")}</div></div>`).join("") + `</div>`;
+  }
+  $("#details").innerHTML = h;
+  $("#details").scrollTop = 0;
+  $("#details").onclick = (ev) => {
+    const c = ev.target.closest("[data-id]");
+    if (c) return select(+c.dataset.id, { recenter: false });
+    const f = ev.target.closest("[data-file]");
+    if (f) return openFile(+f.dataset.file, null);
   };
 }
 /** An amount in the document's currency (e.g. "USD"), or a plain number when the currency is unknown. */

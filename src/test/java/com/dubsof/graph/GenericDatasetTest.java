@@ -223,6 +223,42 @@ class GenericDatasetTest {
     }
 
     @Test
+    void aStatedRelationShowsItsFilesAndHowBothEndsAreWritten() throws Exception {
+        long reply = documentOf("Mail/2024-03-13 reply.eml");
+        long dana = Db.number(conn, "SELECT id FROM entities WHERE etype = 'person' AND name = 'Dana Price'");
+        long sent = Db.number(conn, "SELECT id FROM relations WHERE src = ? AND dst = ? AND rel = 'SENT'", dana, reply);
+        Map<String, Object> relation = new GraphApi(conn).relation(sent);
+
+        assertEquals("SENT", relation.get("rel"));
+        assertEquals("Dana Price", ((Map<?, ?>) relation.get("src_entity")).get("name"));
+        List<?> evidence = (List<?>) relation.get("evidence");
+        assertEquals(1, evidence.size());
+        Map<?, ?> file = (Map<?, ?>) evidence.get(0);
+        assertEquals("Mail/2024-03-13 reply.eml", file.get("path"));
+        List<String> roles = new ArrayList<>();
+        for (Object m : (List<?>) file.get("mentions")) {
+            roles.add(((Map<?, ?>) m).get("entity_id") + " " + ((Map<?, ?>) m).get("role"));
+        }
+        assertTrue(roles.contains(dana + " email_from"), "mentions: " + roles);
+        assertTrue(roles.contains(reply + " self"), "mentions: " + roles);
+    }
+
+    @Test
+    void aDerivedRelationShowsTheDocumentsItComesFrom() throws Exception {
+        // "Conveyor Upgrade" USES_PRODUCT CS-20: through the invoices HR-1040 and HR-1043, which list it
+        long uses = Db.number(conn, "SELECT r.id FROM relations r JOIN entities p ON p.id = r.src"
+                + " WHERE r.rel = 'USES_PRODUCT' AND p.name = 'Conveyor Upgrade'");
+        Map<String, Object> relation = new GraphApi(conn).relation(uses);
+        assertTrue(((List<?>) relation.get("evidence")).isEmpty());
+        assertTrue(String.valueOf(relation.get("rule")).contains("list or describe"));
+        List<Object> via = new ArrayList<>();
+        for (Object document : (List<?>) relation.get("via")) {
+            via.add(((Map<?, ?>) document).get("key"));
+        }
+        assertEquals(Arrays.asList("HR-1040", "HR-1043"), via);
+    }
+
+    @Test
     void freeMailDomainIsNotACompany() throws Exception {
         assertEquals(0, Db.number(conn, "SELECT COUNT(*) FROM entities WHERE etype = 'company' AND name = 'gmail.com'"));
     }

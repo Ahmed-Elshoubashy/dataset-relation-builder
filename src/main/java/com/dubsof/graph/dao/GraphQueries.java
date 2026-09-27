@@ -1,17 +1,20 @@
 package com.dubsof.graph.dao;
 
 import com.dubsof.graph.dao.row.EntityRow;
+import com.dubsof.graph.dao.row.EvidenceRow;
 import com.dubsof.graph.dao.row.FileMentionRow;
 import com.dubsof.graph.dao.row.NeighbourRow;
 import com.dubsof.graph.dao.row.RelatedEntityRow;
 import com.dubsof.graph.dao.row.RelationRow;
 import com.dubsof.graph.dao.row.SourceRow;
 import com.dubsof.graph.db.Db;
+import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.util.Json;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
@@ -77,6 +80,29 @@ public class GraphQueries {
                     + " GROUP BY other"
                     + " ORDER BY CASE MIN(e.etype) WHEN 'project' THEN 0 WHEN 'company' THEN 1 WHEN 'product' THEN 2"
                     + "   WHEN 'person' THEN 3 ELSE 4 END, MAX(r.weight) DESC, other LIMIT ?";
+    private static final String RELATION_BY_ID = "SELECT * FROM relations WHERE id = ?";
+    /** The files behind a relation, each with the mentions of the relation's two ends in it. */
+    private static final String RELATION_EVIDENCE =
+            "SELECT f.id AS file_id, f.path, f.kind, f.status, m.entity_id, m.surface, m.role, m.method, m.confidence"
+                    + " FROM relation_evidence ev JOIN relations r ON r.id = ev.relation_id JOIN files f ON f.id = ev.file_id"
+                    + " LEFT JOIN mentions m ON m.file_id = f.id AND m.entity_id IN (r.src, r.dst)"
+                    + " WHERE ev.relation_id = ? ORDER BY f.path, m.entity_id = r.src DESC, m.role LIMIT ?";
+    /** Derived INVOLVED_IN (person, project): the project's documents the person authored, sent or received. */
+    private static final String INVOLVED_IN_VIA =
+            "SELECT DISTINCT d.* FROM relations r JOIN relations h ON h.dst = r.dst AND h.rel = 'HAS_DOCUMENT'"
+                    + " JOIN entities d ON d.id = r.dst"
+                    + " WHERE r.rel IN ('AUTHORED', 'SENT', 'RECEIVED') AND r.src = ? AND h.src = ? ORDER BY d.key LIMIT ?";
+    /** Derived USES_PRODUCT (project, product): the project's documents that list or describe the product. */
+    private static final String USES_PRODUCT_VIA =
+            "SELECT DISTINCT d.* FROM relations h JOIN relations r ON r.src = h.dst AND r.rel IN ('LISTS_PRODUCT', 'DESCRIBES')"
+                    + " JOIN entities d ON d.id = h.dst"
+                    + " WHERE h.rel = 'HAS_DOCUMENT' AND h.src = ? AND r.dst = ? ORDER BY d.key LIMIT ?";
+    /** Derived PURCHASED_OR_QUOTED (company, product): documents issued to the company that list the product. */
+    private static final String PURCHASED_OR_QUOTED_VIA =
+            "SELECT DISTINCT d.* FROM relations i JOIN relations l ON l.src = i.src AND l.rel = 'LISTS_PRODUCT'"
+                    + " JOIN entities d ON d.id = i.src"
+                    + " WHERE i.rel = 'ISSUED_TO' AND i.dst = ? AND l.dst = ? ORDER BY d.key LIMIT ?";
+
     /** Every relation of an entity to a neighbour of an allowed type: which neighbour, its type, the relation and direction. */
     private static final String NEIGHBOUR_RELATIONS =
             "SELECT DISTINCT e.id, e.etype, r.rel, CASE WHEN r.src = ? THEN 'out' ELSE 'in' END AS dir FROM relations r"
@@ -151,6 +177,25 @@ public class GraphQueries {
                 entityId, entityId, entityId, entityId, includeDerived ? 1 : 0, Json.write(types));
     }
 
+    public RelationRow findRelation(Connection conn, long id) throws SQLException {
+        return Db.first(conn, RELATION_BY_ID, RelationsDao::map, id);
+    }
+
+    public List<EvidenceRow> findRelationEvidence(Connection conn, long relationId, int limit) throws SQLException {
+        return Db.list(conn, RELATION_EVIDENCE, GraphQueries::mapEvidence, relationId, limit);
+    }
+
+    /**
+     * The documents a derived relation was inferred from (derived relations have no evidence files of their
+     * own); empty for a relation type that is not derived.
+     */
+    public List<EntityRow> findDerivedVia(Connection conn, RelationRow relation, int limit) throws SQLException {
+        String sql = relation.rel == RelationType.INVOLVED_IN ? INVOLVED_IN_VIA
+                : relation.rel == RelationType.USES_PRODUCT ? USES_PRODUCT_VIA
+                : relation.rel == RelationType.PURCHASED_OR_QUOTED ? PURCHASED_OR_QUOTED_VIA : null;
+        return sql == null ? new ArrayList<EntityRow>() : Db.list(conn, sql, EntitiesDao::map, relation.src, relation.dst, limit);
+    }
+
     public List<RelationRow> findRelationsAmong(Connection conn, Collection<Long> ids, boolean includeDerived) throws SQLException {
         String json = Json.write(ids);
         return Db.list(conn, RELATIONS_AMONG, RelationsDao::map, json, json, includeDerived ? 1 : 0);
@@ -211,6 +256,20 @@ public class GraphQueries {
         m.entityName = rs.getString("entity_name");
         m.entityType = rs.getString("entity_type");
         return m;
+    }
+
+    private static EvidenceRow mapEvidence(ResultSet rs) throws SQLException {
+        EvidenceRow row = new EvidenceRow();
+        row.fileId = rs.getLong("file_id");
+        row.path = rs.getString("path");
+        row.kind = rs.getString("kind");
+        row.status = rs.getString("status");
+        row.entityId = Db.longOrNull(rs, "entity_id");
+        row.surface = rs.getString("surface");
+        row.role = rs.getString("role");
+        row.method = rs.getString("method");
+        row.confidence = rs.getObject("confidence") == null ? null : rs.getDouble("confidence");
+        return row;
     }
 
     private static NeighbourRow mapNeighbour(ResultSet rs) throws SQLException {

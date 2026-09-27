@@ -38,6 +38,7 @@ public class ApiServer {
 
     private static final Pattern ENTITY = Pattern.compile("^/api/entities/(\\d+)$");
     private static final Pattern FILE = Pattern.compile("^/api/files/(\\d+)$");
+    private static final Pattern RELATION = Pattern.compile("^/api/relations/(\\d+)$");
     private static final Pattern FILE_RAW = Pattern.compile("^/api/files/(\\d+)/raw$");
 
     private final int port;
@@ -148,6 +149,10 @@ public class ApiServer {
             }
             if (file.matches()) {
                 return api.file(Long.parseLong(file.group(1)));
+            }
+            Matcher relation = RELATION.matcher(path);
+            if (relation.matches()) {
+                return api.relation(Long.parseLong(relation.group(1)));
             }
             throw new ApiException(404, "Not Found");
         } finally {
