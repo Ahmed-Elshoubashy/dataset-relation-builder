@@ -138,7 +138,10 @@ Nothing in the code is tied to one dataset. What a dataset has of its own goes i
 docker compose up -d --build        # http://localhost:8765
 ```
 
-- Two-stage image: built with JDK 21, run on a Java 21 JRE.
+- Two-stage image: built with the official `gradle:9.0.0-jdk21` image (Gradle comes preinstalled, so the
+  build doesn't download it), run on a Java 21 JRE. Library jars are kept in a BuildKit cache between
+  builds: the first build takes under a minute once the images are pulled, a rebuild after a code change
+  a few seconds. Keep the image's Gradle version equal to `gradle/wrapper/gradle-wrapper.properties`.
   Tesseract is installed, so all three reading options work.
 - Your home folder is mounted **read-only at its own path**, so the dataset picker shows real laptop paths.
   Share less with `DATASETS_DIR`, and pre-fill the dialog with `DATASET`, in a local `.env` (git-ignored):

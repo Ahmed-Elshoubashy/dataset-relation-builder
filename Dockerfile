@@ -1,11 +1,14 @@
-# ---- build: JDK 21
-FROM eclipse-temurin:21-jdk AS build
+# ---- build: JDK 21 with Gradle already installed (the same version as gradle/wrapper/gradle-wrapper.properties).
+# The wrapper would download the Gradle distribution (~130 MB) from services.gradle.org on every fresh build,
+# which is slow; the official image comes from Docker Hub instead, and much faster.
+FROM gradle:9.0.0-jdk21 AS build
 WORKDIR /src
-COPY gradlew settings.gradle build.gradle ./
-COPY gradle ./gradle
-RUN ./gradlew --no-daemon -q dependencies > /dev/null   # cache dependencies in their own layer
+COPY settings.gradle build.gradle ./
 COPY src ./src
-RUN ./gradlew --no-daemon -q installDist
+# The library jars live in a BuildKit cache that survives between builds: only the first build downloads them,
+# later builds (even after build.gradle changes) only compile.
+RUN --mount=type=cache,target=/root/.gradle \
+    gradle --no-daemon --console=plain installDist
 
 # ---- run: Java 21 runtime
 FROM eclipse-temurin:21-jre
