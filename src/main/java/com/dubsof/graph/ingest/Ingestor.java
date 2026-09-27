@@ -125,8 +125,8 @@ public class Ingestor {
         if (name.startsWith("~$")) {
             status = FileStatus.SKIPPED;   // Office lock file
 
-        } else if (kind.isIgnored() || rel.contains("/.git/") || rel.startsWith("Software/")) {
-            status = FileStatus.SKIPPED;
+        } else if (kind.isIgnored() || rel.contains("/.git/") || profile.skips(rel)) {
+            status = FileStatus.SKIPPED;   // code, media, a git folder, or a folder the profile skips
         }
 
         if (blob == null) {

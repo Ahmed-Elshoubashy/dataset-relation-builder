@@ -1,5 +1,6 @@
 package com.dubsof.graph.pipeline;
 
+import com.dubsof.graph.dataset.DirectoryPattern;
 import com.dubsof.graph.dataset.FolderPattern;
 import com.dubsof.graph.dataset.Owner;
 import com.dubsof.graph.dataset.Profile;
@@ -85,7 +86,7 @@ class OwnerTest {
     }
 
     private static Profile profile(String owner, boolean fromDataset) {
-        return new Profile("test", fromDataset, new ArrayList<FolderPattern>(), null, owner, null,
+        return new Profile("test", fromDataset, new ArrayList<FolderPattern>(), new ArrayList<DirectoryPattern>(), null, owner, null,
                 Profile.defaults().names, new LinkedHashMap<String, String>());
     }
 }

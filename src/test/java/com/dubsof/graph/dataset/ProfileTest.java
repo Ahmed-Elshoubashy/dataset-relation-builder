@@ -98,6 +98,13 @@ class ProfileTest {
     }
 
     @Test
+    void johnDoeSkipsItsSoftwareFolder() {
+        assertTrue(JOHN_DOE.skips("Software/tools/build.sh"));
+        assertFalse(JOHN_DOE.skips("Customers/Acme Corporation/Contracts/MSA.pdf"));
+        assertFalse(Profile.defaults().skips("Software/tools/build.sh"));
+    }
+
+    @Test
     void ownerDomainAndDocumentPrefixesAreRead(@TempDir Path dir) throws Exception {
         File file = dir.resolve("p.json").toFile();
         Files.write(file.toPath(), ("{\"owner\": \"Harbor Robotics Inc\", \"ownerDomain\": \"HarborRobotics.com\","

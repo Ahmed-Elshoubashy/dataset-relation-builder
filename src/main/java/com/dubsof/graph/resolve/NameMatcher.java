@@ -413,6 +413,10 @@ public final class NameMatcher {
         List<String> names = new ArrayList<>();
         Matcher m = companyInText.matcher(text);
         while (m.find()) {
+            // "INCLUDING BUT NOT LIMITED TO ...": the phrase "limited to", not a company (licence texts)
+            if (m.group(1).toLowerCase().endsWith("limited") && text.regionMatches(true, m.end(1), " to ", 0, 4)) {
+                continue;
+            }
             // a trailing "." may just end the sentence; names are compared without punctuation anyway
             String name = m.group(1).trim().replaceFirst("\\.$", "")
                     .replaceFirst("^(?:The|Our|Your|Dear|Hi|Hello|Attn|From|To|With|For|And)\\s+", "");

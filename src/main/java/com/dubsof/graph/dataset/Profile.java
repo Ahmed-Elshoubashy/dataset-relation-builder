@@ -26,6 +26,7 @@ import java.util.stream.Stream;
  * <pre>
  * {
  *   "folderPatterns": ["Clients/{company}/{job_id:P-\\d+} {title}/**"],
+ *   "skipDirectories": ["/Software", "node_modules"],
  *   "jobIdPattern": "P-\\d+",
  *   "owner": null,
  *   "ownerDomain": null,
@@ -53,6 +54,8 @@ public final class Profile {
     public final String source;
     /** Folder layouts, tried in order; the first that matches a file's path wins. */
     public final List<FolderPattern> folderPatterns;
+    /** Folders whose files are recorded but never read ("/Software": source code, not business files). */
+    public final List<DirectoryPattern> skipDirectories;
     /** Job (project) ids in text, e.g. "P-\d+"; null when the dataset has none. */
     public final Pattern jobIdPattern;
     /** The owner organisation, when the profile names it (overrides detection). */
@@ -66,11 +69,12 @@ public final class Profile {
     /** Document-number prefixes -> document type ("HR" -> "invoice"), added to DocumentNumbers' defaults. */
     public final Map<String, String> documentPrefixes;
 
-    public Profile(String source, boolean fromDataset, List<FolderPattern> folderPatterns, Pattern jobIdPattern,
-                   String owner, String ownerDomain, NameMatcher names, Map<String, String> documentPrefixes) {
+    public Profile(String source, boolean fromDataset, List<FolderPattern> folderPatterns, List<DirectoryPattern> skipDirectories,
+                   Pattern jobIdPattern, String owner, String ownerDomain, NameMatcher names, Map<String, String> documentPrefixes) {
         this.source = source;
         this.fromDataset = fromDataset;
         this.folderPatterns = folderPatterns;
+        this.skipDirectories = skipDirectories;
         this.jobIdPattern = jobIdPattern;
         this.owner = owner;
         this.ownerDomain = ownerDomain;
@@ -79,13 +83,14 @@ public final class Profile {
     }
 
     public static Profile defaults() {
-        return new Profile("defaults", false, new ArrayList<>(), null, null, null,
+        return new Profile("defaults", false, new ArrayList<>(), new ArrayList<>(), null, null, null,
                 new NameMatcher(DEFAULT_LEGAL_SUFFIXES, DEFAULT_GENERIC_DOMAINS), new LinkedHashMap<>());
     }
 
     /** The same profile with another source text, and marked as the dataset's own or not. */
     private Profile withSource(String newSource, boolean isFromDataset) {
-        return new Profile(newSource, isFromDataset, folderPatterns, jobIdPattern, owner, ownerDomain, names, documentPrefixes);
+        return new Profile(newSource, isFromDataset, folderPatterns, skipDirectories, jobIdPattern, owner, ownerDomain, names,
+                documentPrefixes);
     }
 
     /** A fresh document-number reader for one analysis: the defaults, this profile's prefixes and job ids. */
@@ -217,7 +222,12 @@ public final class Profile {
                 documentPrefixes.put(String.valueOf(prefix.getKey()).toUpperCase(), String.valueOf(prefix.getValue()));
             }
         }
-        return new Profile(file.getPath(), false, folderPatterns, jobIdPattern, owner, ownerDomain, names, documentPrefixes);
+        List<DirectoryPattern> skipDirectories = new ArrayList<>();
+        for (Object pattern : list(json.get("skipDirectories"), new ArrayList<>())) {
+            skipDirectories.add(new DirectoryPattern(String.valueOf(pattern)));
+        }
+        return new Profile(file.getPath(), false, folderPatterns, skipDirectories, jobIdPattern, owner, ownerDomain, names,
+                documentPrefixes);
     }
 
     /**
@@ -235,6 +245,16 @@ public final class Profile {
         ctx.area = parts.length > 1 ? parts[0] : null;
         ctx.category = parts.length > 2 ? parts[1] : null;
         return ctx;
+    }
+
+    /** True when the file ("Software/tools/build.sh") is inside a folder the profile says to skip. */
+    public boolean skips(String path) {
+        for (DirectoryPattern pattern : skipDirectories) {
+            if (pattern.matches(path)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** What the first matching folder pattern reads from the path, or null when none matches. */

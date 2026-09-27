@@ -156,6 +156,12 @@ class NameMatcherTest {
     }
 
     @Test
+    void limitedToIsNotACompany() {
+        assertEquals(Arrays.asList(), NAMES.findCompanyNames("WARRANTIES, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF"));
+        assertEquals(Arrays.asList("Kestrel Foods Limited"), NAMES.findCompanyNames("Invoice to Kestrel Foods Limited today."));
+    }
+
+    @Test
     void sentenceStartIsDroppedWhenTheRestIsNamedElsewhere() {
         assertEquals(Arrays.asList("Harbor Robotics Inc", "Harbor Robotics Inc"),
                 NAMES.findCompanyNames("Ask Harbor Robotics Inc for a quote. We have worked with Harbor Robotics Inc before."));

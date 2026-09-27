@@ -42,6 +42,7 @@ Nothing in the code is tied to one dataset. What a dataset has of its own goes i
   ```json
   {
     "folderPatterns": ["Clients/{company}/{job_id:P-\\d+} {title}/**"],
+    "skipDirectories": ["/Software", "node_modules"],
     "jobIdPattern": "P-\\d+",
     "owner": null,
     "ownerDomain": null,
@@ -53,7 +54,11 @@ Nothing in the code is tied to one dataset. What a dataset has of its own goes i
 
   Every key is optional. `folderPatterns` turn folder names into hints (`{company}`, `{job_id:REGEX}`,
   `{title}`, `{category}`, `**` for the rest of the path); the first pattern that matches is used.
-  With no pattern, files get no folder hints and everything else still runs. `jobIdPattern` defaults
+  With no pattern, files get no folder hints and everything else still runs. `skipDirectories` lists
+  folders whose files are recorded as skipped and never read, written like `.gitignore` lines:
+  `"/Software"` is that folder at the root, a bare `"node_modules"` is that folder at any depth, a path
+  with `/` starts at the root, `*` / `?` match inside one folder name and `**` any number of folders
+  (the john-doe profile skips `/Software`). `.git` folders, code and media files are always skipped. `jobIdPattern` defaults
   to the regex of the first `{job_id:...}`. Without a profile, broad default lists of free e-mail
   providers and legal suffixes (Ltd, Inc, GmbH, SA, BV, SRL, Pty, ...) are used.
 - **Document numbers** identify documents (`extract.parsers.DocumentNumbers` is the one place that knows them).
