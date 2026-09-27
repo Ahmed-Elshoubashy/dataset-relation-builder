@@ -405,25 +405,36 @@ function renderConnection(c) {
 }
 
 /* ------------------------------------------------------------ chat */
-const chat = { messages: [], key: "", envKey: null };   // the key stays in this tab's memory only
-const CHAT_EXAMPLES = ["How many customers does the dataset have?", "List all the quotes sent to Acme Corporation",
-  "Get me any probable aliases or abbreviations for Acme", "How is Acme connected to Falcon Aerospace?"];
+const chat = { messages: [], key: "", envKey: null, questions: [] };   // the key stays in this tab's memory only
 
+/** Typing a question needs Claude: the server's key, or one typed in the chat. The fixed questions always work. */
+const canType = () => chat.envKey || !!chat.key;
+function syncChatInput() {
+  const input = $("#chat-input");
+  input.disabled = !canType();
+  input.placeholder = canType() ? "Ask about companies, documents, people…" : "Add an API key to type questions";
+  $("#chat-form button").disabled = !canType();
+  $("#chat-engine").textContent = canType() ? "Claude" : "fixed questions (add a key for Claude)";
+}
 async function openChat() {
   $("#chat").hidden = false;
   $("#hint").hidden = true;
   if (chat.envKey === null) {
     const opts = await api("/api/analysis/options").catch(() => ({}));
     chat.envKey = !!opts.env_key;
+    chat.questions = opts.chat_questions || [];
+    // the fixed questions stay above the input, answered without Claude
+    $("#chat-presets").innerHTML = chat.questions.map((q) => `<button type="button" data-preset="${esc(q.id)}">${esc(q.text)}</button>`).join("");
     $("#chat-key-wrap").hidden = chat.envKey;
-    $("#chat-engine").textContent = chat.envKey ? "Claude" : "offline rules (add a key for Claude)";
+    syncChatInput();
   }
   if (!$("#chat-log").children.length) chatWelcome();
-  $("#chat-input").focus();
+  if (canType()) $("#chat-input").focus();
 }
 function chatWelcome() {
-  $("#chat-log").innerHTML = `<div class="msg bot">Ask about the companies, people, projects, documents and products in this graph. Every answer comes from the graph; click a name to see it.
-    <div class="chat-suggest" style="margin-top:8px">${CHAT_EXAMPLES.map((q) => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join("")}</div></div>`;
+  $("#chat-log").innerHTML = `<div class="msg bot">Ask about the companies, people, projects, documents and products in this graph.
+    Every answer comes from the graph; click a name to see it. The questions below work without an API key;
+    ${canType() ? "you can also type your own." : "add a key to type your own."}</div>`;
 }
 /** Answer text -> HTML: [[id|name]] becomes a clickable chip, **bold** and "- " lines become bold and lists. */
 function chatHtml(text, entities) {
@@ -448,27 +459,24 @@ function chatBubble(cls, html) {
   $("#chat-log").scrollTop = $("#chat-log").scrollHeight;
   return el;
 }
-async function askChat(question) {
-  question = question.trim();
-  if (!question) return;
-  $("#chat-input").value = "";
-  chat.messages.push({ role: "user", content: question });
-  chatBubble("user", esc(question));
+/**
+ * Sends one question: {preset} for a fixed question (no key needed), or the conversation for Claude.
+ * Both are kept in the conversation, so Claude sees the fixed answers too.
+ */
+async function sendChat(text, body) {
+  chat.messages.push({ role: "user", content: text });
+  chatBubble("user", esc(text));
   const pending = chatBubble("bot thinking", "Looking it up…");
   try {
-    const r = await fetch("/api/chat", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: chat.messages, api_key: chat.key || null }),
-    });
+    const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const a = await r.json();
     if (!r.ok) throw new Error(a.detail || r.statusText);
     chat.messages.push({ role: "assistant", content: a.answer });
     pending.className = "msg bot";
     const used = [...new Set(a.tools.map((t) => t.name))].join(", ");
     pending.innerHTML = chatHtml(a.answer, a.entities)
-      + `<div class="meta">${a.engine === "claude" ? "Claude" : "offline rules"}${used ? ` · ${esc(used)}` : ""}</div>`
+      + `<div class="meta">${a.engine === "claude" ? "Claude" : "from the graph"}${used ? ` · ${esc(used)}` : ""}</div>`
       + (a.notice ? `<div class="notice">${esc(a.notice)}</div>` : "");
-    $("#chat-engine").textContent = a.engine === "claude" ? "Claude" : chat.envKey || chat.key ? "offline rules" : "offline rules (add a key for Claude)";
     if (a.focus != null) select(a.focus);
   } catch (err) {
     chat.messages.pop();
@@ -477,15 +485,27 @@ async function askChat(question) {
   }
   $("#chat-log").scrollTop = $("#chat-log").scrollHeight;
 }
+function askChat(question) {
+  question = question.trim();
+  if (!question || !canType()) return;
+  $("#chat-input").value = "";
+  sendChat(question, { messages: [...chat.messages, { role: "user", content: question }], api_key: chat.key || null });
+}
+function askPreset(id) {
+  const q = chat.questions.find((x) => x.id === id);
+  if (q) sendChat(q.text, { preset: id });
+}
 function initChat() {
   $("#btn-chat").onclick = () => ($("#chat").hidden ? openChat() : ($("#chat").hidden = true, $("#hint").hidden = false));
   $("#chat-close").onclick = () => { $("#chat").hidden = true; $("#hint").hidden = false; };
   $("#chat-clear").onclick = () => { chat.messages = []; chatWelcome(); };
-  $("#chat-key").oninput = (e) => { chat.key = e.target.value.trim(); };
+  $("#chat-key").oninput = (e) => { chat.key = e.target.value.trim(); syncChatInput(); };
   $("#chat-form").onsubmit = (e) => { e.preventDefault(); askChat($("#chat-input").value); };
+  $("#chat-presets").onclick = (e) => {
+    const p = e.target.closest("[data-preset]");
+    if (p) askPreset(p.dataset.preset);
+  };
   $("#chat-log").onclick = (e) => {
-    const q = e.target.closest("[data-q]");
-    if (q) return askChat(q.dataset.q);
     const c = e.target.closest("[data-id]");
     if (c) select(+c.dataset.id);
   };

@@ -1,6 +1,7 @@
 package com.dubsof.graph.api;
 
 import com.dubsof.graph.Config;
+import com.dubsof.graph.chat.ChatException;
 import com.dubsof.graph.chat.ChatService;
 import com.dubsof.graph.dao.FilesDao;
 import com.dubsof.graph.dao.row.FileRow;
@@ -174,10 +175,21 @@ public class ApiServer {
     }
 
     /**
-     * A chat question: {"messages": [{"role": "user" | "assistant", "content": "..."}, ...], "api_key": optional}.
-     * The last message is the question. The graph is read under the read lock, like every other query.
+     * A chat question: either {"preset": "entities" | "customers" | "people" | "owner"} (no key needed), or
+     * {"messages": [{"role": "user" | "assistant", "content": "..."}, ...], "api_key": optional}, whose last message
+     * is the typed question, for Claude. The graph is read under the read lock, like every other query.
      */
     private Object chat(Map<?, ?> body) throws Exception {
+        if (body.get("preset") != null) {
+            dbLock.readLock().lock();
+            try (Connection conn = Db.open(Config.DB_FILE, true)) {
+                return new ChatService(conn, (String) null).preset(String.valueOf(body.get("preset"))).toMap();
+            } catch (ChatException e) {
+                throw new ApiException(e.status, e.getMessage());
+            } finally {
+                dbLock.readLock().unlock();
+            }
+        }
         Object raw = body.get("messages");
         List<Map<String, Object>> messages = new ArrayList<Map<String, Object>>();
         if (raw instanceof List) {
@@ -196,7 +208,9 @@ public class ApiServer {
         String typedKey = body.get("api_key") == null ? "" : String.valueOf(body.get("api_key")).trim();
         dbLock.readLock().lock();
         try (Connection conn = Db.open(Config.DB_FILE, true)) {
-            return new ChatService(conn, typedKey.isEmpty() ? null : typedKey).answer(messages).toMap();
+            return new ChatService(conn, typedKey.isEmpty() ? null : typedKey).ask(messages).toMap();
+        } catch (ChatException e) {
+            throw new ApiException(e.status, e.getMessage());
         } finally {
             dbLock.readLock().unlock();
         }

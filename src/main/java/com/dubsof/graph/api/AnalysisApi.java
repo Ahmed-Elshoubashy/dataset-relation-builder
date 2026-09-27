@@ -6,6 +6,7 @@ import com.anthropic.errors.PermissionDeniedException;
 import com.anthropic.errors.UnauthorizedException;
 import com.anthropic.models.models.ModelListParams;
 import com.dubsof.graph.Config;
+import com.dubsof.graph.chat.ChatPresets;
 import com.dubsof.graph.dataset.Profile;
 import com.dubsof.graph.pipeline.Pipeline;
 import com.dubsof.graph.pipeline.Progress;
@@ -88,6 +89,15 @@ public class AnalysisApi {
         o.put("claude_model", Config.CLAUDE_MODEL);
         o.put("profiles", Profile.available());
         o.put("default_profile", Config.PROFILE == null ? null : new File(Config.PROFILE).getName());
+        // the chat's fixed questions, answered without an API key
+        List<Map<String, Object>> questions = new ArrayList<Map<String, Object>>();
+        for (Map.Entry<String, String> q : ChatPresets.QUESTIONS.entrySet()) {
+            Map<String, Object> question = new LinkedHashMap<String, Object>();
+            question.put("id", q.getKey());
+            question.put("text", q.getValue());
+            questions.add(question);
+        }
+        o.put("chat_questions", questions);
         return o;
     }
 

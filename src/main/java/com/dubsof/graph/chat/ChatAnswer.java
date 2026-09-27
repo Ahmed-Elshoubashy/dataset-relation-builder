@@ -11,9 +11,9 @@ import java.util.Map;
  */
 public class ChatAnswer {
     public String answer;
-    /** "claude" or "rules" (offline). */
+    /** "claude", or "preset" for a fixed question answered without Claude. */
     public String engine;
-    /** Something the user should know, e.g. that Claude failed and the rules answered instead; or null. */
+    /** Something the user should know, e.g. that Claude stopped after too many tool calls; or null. */
     public String notice;
     public Long focus;
     public Map<Long, Map<String, Object>> entities = new LinkedHashMap<>();

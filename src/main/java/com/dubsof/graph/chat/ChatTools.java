@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The read-only tools the chat answers with, for Claude and for the offline rules alike. Each tool is one
+ * The read-only tools the chat answers with, for Claude and for the fixed questions (ChatPresets) alike. Each tool is one
  * question the graph can answer exactly ("the documents issued to entity 2 of type quote"); none writes
  * anything or runs free-form SQL. Every entity a tool returns is remembered, so the answer can show it as a
  * link, and {@code show_in_graph} records which entity the explorer should centre on.
@@ -284,21 +284,6 @@ public class ChatTools {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("shown", brief(e));
         return out;
-    }
-
-    // ------------------------------------------------------------------ for the offline rules
-
-    /**
-     * The entity a name in a question means: an exact name or spelling first, else the most connected entity
-     * whose name or spelling contains it; of the given type when there is one. Null when nothing matches.
-     */
-    public EntityRow resolve(String name, String type) throws Exception {
-        EntityRow exact = graphQueries.findExactMatch(conn, type, name);
-        if (exact != null) {
-            return exact;
-        }
-        List<EntityRow> found = graphQueries.searchEntities(conn, type, null, name, 1, 0);
-        return found.isEmpty() ? null : found.get(0);
     }
 
     // ------------------------------------------------------------------ results

@@ -296,6 +296,7 @@ dialog.analyze form { display: flex; flex-direction: column; min-height: 0; flex
 .chat-suggest { display: flex; flex-wrap: wrap; gap: 6px; }
 .chat-suggest button { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
 .chat-suggest button:hover { border-color: var(--accent); }
+.chat-presets { padding: 8px 12px 0; border-top: 1px solid var(--border); }
 .chat-key { padding: 8px 12px 0; display: grid; gap: 4px; }
 .chat-key input, .chat-form input { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); font: inherit; font-size: 13px; outline: none; }
 .chat-key input:focus, .chat-form input:focus { border-color: var(--accent); background: var(--panel); }

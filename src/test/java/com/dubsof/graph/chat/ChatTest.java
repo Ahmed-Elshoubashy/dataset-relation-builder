@@ -25,9 +25,10 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The chat on the generic fixture's graph: the offline rules, and Claude's tool loop against a fake API. */
+/** The chat on the generic fixture's graph: the fixed questions, and Claude's tool loop against a fake API. */
 class ChatTest {
 
     @TempDir
@@ -51,44 +52,48 @@ class ChatTest {
         conn.close();
     }
 
-    // ---------------------------------------------------------------- offline rules
+    // ---------------------------------------------------------------- the fixed questions (no API key)
 
     @Test
-    void howManyCustomers() throws Exception {
+    void whatAreTheEntities() throws Exception {
+        ChatAnswer a = preset("entities");
+        long total = Db.number(conn, "SELECT COUNT(*) FROM entities");
+        assertTrue(a.answer.startsWith("The graph has **" + total + "** entities of five kinds:"), a.answer);
         // no customer folders here: the customers are the companies invoices are issued to, not the owner
-        ChatAnswer a = offline("How many customers does the dataset have?");
-        assertTrue(a.answer.startsWith("The dataset has **3** customers"), a.answer);
-        assertTrue(a.answer.contains("[[" + kestrel + "|Kestrel Foods Inc]]"), a.answer);
-        assertEquals("rules", a.engine);
+        assertTrue(a.answer.contains("companies (**3** customers): the owner, its customers and suppliers"), a.answer);
+        assertTrue(a.answer.contains("|Harbor Robotics Inc]]."), a.answer);
+        assertEquals("preset", a.engine);
     }
 
     @Test
-    void listTheDocumentsOfOneTypeSentToACustomer() throws Exception {
-        ChatAnswer a = offline("List all the invoices sent to Customer Kestrel Foods Inc");
-        assertTrue(a.answer.startsWith("**2** invoices linked to [[" + kestrel + "|Kestrel Foods Inc]]"), a.answer);
-        assertTrue(a.answer.contains("HR-1040") && a.answer.contains("HR-1043"), a.answer);
-        assertEquals(Long.valueOf(kestrel), a.focus, "the graph centres on the customer");
+    void howManyCustomers() throws Exception {
+        ChatAnswer a = preset("customers");
+        assertTrue(a.answer.startsWith("The dataset has **3** customers:"), a.answer);
+        assertTrue(a.answer.contains("[[" + kestrel + "|Kestrel Foods Inc]]"), a.answer);
         assertTrue(a.entities.containsKey(kestrel), "links carry the entity's type");
     }
 
     @Test
-    void aliasesOfAnEntity() throws Exception {
-        // the misspelling on HR-1040 and the e-mail domain are spellings of Kestrel Foods Inc
-        ChatAnswer a = offline("Get me any probable aliases or abbreviations for Kestrel");
-        assertTrue(a.answer.contains("“Kestral Foods Inc”"), a.answer);
-        assertTrue(a.answer.contains("“kestrelfoods.com”"), a.answer);
+    void howManyPeople() throws Exception {
+        long people = Db.number(conn, "SELECT COUNT(*) FROM entities WHERE etype = 'person'");
+        assertEquals("The dataset has **" + people + "** people.", preset("people").answer);
     }
 
     @Test
-    void aNameOnItsOwnDescribesTheEntity() throws Exception {
-        ChatAnswer a = offline("Who is Dana Price?");
-        assertTrue(a.answer.contains("|Dana Price]] is a person"), a.answer);
+    void whoIsTheOwner() throws Exception {
+        ChatAnswer a = preset("owner");
+        assertTrue(a.answer.contains("|Harbor Robotics Inc]] (harborrobotics.com): the organisation whose files these are"), a.answer);
+        assertNotNull(a.focus, "the graph centres on the owner");
     }
 
     @Test
-    void anUnknownQuestionListsWhatTheRulesUnderstand() throws Exception {
-        ChatAnswer a = offline("What will the weather be tomorrow?");
-        assertTrue(a.answer.startsWith("I can answer questions like"), a.answer);
+    void onlyTheFixedQuestionsWorkWithoutAKey() throws Exception {
+        ChatException unknown = assertThrows(ChatException.class, () -> new ChatService(conn, (AnthropicClient) null).preset("weather"));
+        assertEquals(400, unknown.status);
+        ChatException typed = assertThrows(ChatException.class,
+                () -> new ChatService(conn, (AnthropicClient) null).ask(question("How many customers are there?")));
+        assertEquals(400, typed.status);
+        assertTrue(typed.getMessage().contains("needs Claude"), typed.getMessage());
     }
 
     // ---------------------------------------------------------------- Claude, against a fake API
@@ -100,7 +105,7 @@ class ChatTest {
         String text = "{\"type\":\"text\",\"text\":\"There are **3** customers, e.g. [[" + kestrel + "|Kestrel Foods Inc]].\"}";
         HttpServer api = fakeApi(requests, message(toolUse, "tool_use"), message(text, "end_turn"));
         try {
-            ChatAnswer a = new ChatService(conn, client(api)).answer(question("how many customers are there"));
+            ChatAnswer a = new ChatService(conn, client(api)).ask(question("how many customers are there"));
 
             assertEquals("claude", a.engine);
             assertEquals("There are **3** customers, e.g. [[" + kestrel + "|Kestrel Foods Inc]].", a.answer);
@@ -118,7 +123,7 @@ class ChatTest {
     }
 
     @Test
-    void aRejectedKeyFallsBackToTheRules() throws Exception {
+    void aRejectedKeyIsReported() throws Exception {
         HttpServer api = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         api.createContext("/", exchange -> {
             byte[] body = "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"}}"
@@ -130,11 +135,10 @@ class ChatTest {
         });
         api.start();
         try {
-            ChatAnswer a = new ChatService(conn, client(api)).answer(question("How many customers does the dataset have?"));
-            assertEquals("rules", a.engine);
-            assertNotNull(a.notice);
-            assertTrue(a.notice.contains("rejected the API key"), a.notice);
-            assertTrue(a.answer.startsWith("The dataset has **3** customers"), a.answer);
+            ChatException e = assertThrows(ChatException.class,
+                    () -> new ChatService(conn, client(api)).ask(question("How many customers does the dataset have?")));
+            assertEquals(400, e.status);
+            assertTrue(e.getMessage().contains("rejected the API key"), e.getMessage());
         } finally {
             api.stop(0);
         }
@@ -142,8 +146,8 @@ class ChatTest {
 
     // ---------------------------------------------------------------- helpers
 
-    private static ChatAnswer offline(String q) throws Exception {
-        return new ChatService(conn, (AnthropicClient) null).answer(question(q));
+    private static ChatAnswer preset(String id) throws Exception {
+        return new ChatService(conn, (AnthropicClient) null).preset(id);
     }
 
     private static List<Map<String, Object>> question(String text) {

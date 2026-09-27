@@ -22,9 +22,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Answers a chat question about the graph. With an API key, Claude reads the question and calls the read-only
- * {@link ChatTools} until it can answer (at most CHAT_MAX_TOOL_ROUNDS rounds); every number and name in its answer
- * comes from a tool. Without a key, or when Claude fails, {@link ChatRules} answers the question shapes it knows.
+ * Answers chat questions about the graph, in two ways:
+ * <ul>
+ *   <li>a typed question needs an API key: Claude reads it and calls the read-only {@link ChatTools} until it can
+ *       answer (at most CHAT_MAX_TOOL_ROUNDS rounds), so every number and name in its answer comes from a tool;</li>
+ *   <li>the four fixed questions ({@link ChatPresets}) work without a key, answered from the graph directly.</li>
+ * </ul>
  * The conversation is kept by the browser and sent with each question, so the server holds no chat state.
  */
 public class ChatService {
@@ -45,7 +48,6 @@ public class ChatService {
             + "- When the answer is about one main entity, call show_in_graph with it.\n"
             + "- Be brief. Give totals exactly as the tools report them; for long lists show the first items and say how many more.\n";
 
-    private final Connection conn;
     private final ChatTools tools;
     private final AnthropicClient client;   // null: offline
 
@@ -58,7 +60,6 @@ public class ChatService {
 
     /** With this client (tests point it at a fake server); null: offline. */
     ChatService(Connection conn, AnthropicClient client) {
-        this.conn = conn;
         this.tools = new ChatTools(conn);
         this.client = client;
     }
@@ -68,26 +69,32 @@ public class ChatService {
                 : AnthropicOkHttpClient.builder().fromEnv().maxRetries(Config.CLAUDE_MAX_RETRIES).apiKey(apiKey).build();
     }
 
+    /** One of the fixed questions ({@link ChatPresets#QUESTIONS}, by id); needs no API key. */
+    public ChatAnswer preset(String id) throws Exception {
+        if (!ChatPresets.QUESTIONS.containsKey(id)) {
+            throw new ChatException(400, "Unknown question: " + id);
+        }
+        return new ChatPresets(tools).answer(id);
+    }
+
     /**
+     * A typed question, answered by Claude.
+     *
      * @param messages the conversation, oldest first: {"role": "user" | "assistant", "content": text}; the last one
      *                 is the question
+     * @throws ChatException 400 without an API key or with a rejected one, 502 when Claude cannot answer
      */
-    public ChatAnswer answer(List<Map<String, Object>> messages) throws Exception {
-        String question = messages.isEmpty() ? "" : String.valueOf(messages.get(messages.size() - 1).get("content"));
+    public ChatAnswer ask(List<Map<String, Object>> messages) throws Exception {
         if (client == null) {
-            return new ChatRules(tools).answer(question);
+            throw new ChatException(400, "Typing a question needs Claude: add an Anthropic API key, or pick one of the questions.");
         }
         try {
             return askClaude(messages);
         } catch (UnauthorizedException | PermissionDeniedException e) {
-            // fresh tools for the fallback, so the links Claude's half-finished answer collected are not mixed in
-            ChatAnswer offline = new ChatRules(new ChatTools(conn)).answer(question);
-            offline.notice = "Anthropic rejected the API key, so the offline rules answered. Check the key and try again.";
-            return offline;
+            throw new ChatException(400, "Anthropic rejected the API key. Check it and try again.");
         } catch (Exception e) {
-            ChatAnswer offline = new ChatRules(new ChatTools(conn)).answer(question);
-            offline.notice = "Claude could not answer (" + e.getClass().getSimpleName() + "), so the offline rules did.";
-            return offline;
+            throw new ChatException(502, "Claude could not answer: " + e.getClass().getSimpleName()
+                    + (e.getMessage() == null ? "" : " (" + e.getMessage() + ")"));
         }
     }
 

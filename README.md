@@ -41,15 +41,16 @@ The left list shows every entity by type, most connected first. Clicking one cen
   draws only the shortest paths between the two (up to 4 links, at most 5 paths; with or without
   derived links, as the toggle says), listed step by step; clicking a step shows its evidence. The
   owner is never a step in between: it is linked to nearly everything.
-- **Ask the graph.** The "Ask" button opens a chat: "How many customers does the dataset have?", "List all
-  the quotes sent to Acme Corporation", "Get me any aliases or abbreviations for Acme". Names in answers are
-  links that open the entity, and the graph centres on the entity the answer is about. With an API key
-  (the server's `ANTHROPIC_API_KEY`, or one typed in the chat and kept only in that browser tab), Claude
-  understands any wording and answers by calling read-only tools over the graph (`chat.ChatTools`: find
-  entities, get an entity, list its links, aliases, connections, why a link exists); it never writes and
-  never runs its own SQL, so every number comes from the graph. Without a key, `chat.ChatRules` answers the
-  common question shapes offline (how many …, list … sent to …, aliases of …, who works for …, how is X
-  connected to Y, who is …). Each answer says which engine and tools produced it.
+- **Ask the graph.** The "Ask" button opens a chat. Names in answers are links that open the entity, and
+  the graph centres on the entity the answer is about.
+  - Four fixed questions always work, with no API key: "What are the entities?", "How many customers are
+    there?", "How many people are there?" and "Who is the owner?" (`chat.ChatPresets`).
+  - Typing your own question needs Claude: the server's `ANTHROPIC_API_KEY`, or a key typed in the chat
+    (kept only in that browser tab). Without one, the text box is disabled. Claude answers by calling
+    read-only tools over the graph (`chat.ChatTools`: find entities, get an entity, list its links, aliases,
+    connections, why a link exists); it never writes and never runs its own SQL, so every number comes
+    from the graph.
+  - Each answer says whether Claude or the graph answered it, and which tools were used.
 - **Each link once.** A file's free text (e-mail body, signature) does not add a `MENTIONS` link to
   someone the file's template already linked ("Dana Price SENT the e-mail" is not also "the e-mail
   MENTIONS Dana Price").
