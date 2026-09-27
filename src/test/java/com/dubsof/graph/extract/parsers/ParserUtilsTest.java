@@ -68,6 +68,7 @@ class ParserUtilsTest {
     void cleanPersonKeepsNamesOnly() {
         assertEquals("Thomas Bianchi", ParserUtils.cleanPerson("Mr. Thomas Bianchi"));
         assertEquals("Grace O'Neill", ParserUtils.cleanPerson("  Grace O'Neill_ "));
+        assertEquals("José Müller", ParserUtils.cleanPerson("José Müller"));   // accented names are names too
         assertNull(ParserUtils.cleanPerson("thomas bianchi"));          // not capitalised
         assertNull(ParserUtils.cleanPerson("Accounts"));                // one word
         assertNull(ParserUtils.cleanPerson("See the attached invoice")); // a sentence

@@ -2,8 +2,10 @@ package com.dubsof.graph.resolve;
 
 import com.dubsof.graph.util.Text;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -30,21 +32,26 @@ import java.util.regex.Pattern;
  *   email_domain  'falconaero.co.uk'         ~ 'Falcon Aerospace Components'  0.92
  * </pre>
  * The Resolver accepts a match at 0.80 or more (see {@link Resolver#ACCEPT}).
+ * The legal suffixes and free e-mail providers come from the dataset's profile (see dataset.Profile).
  */
 public final class NameMatcher {
 
-    private NameMatcher() {
-    }
-
-    /** Words that only say what kind of company it is; dropped from the end of a name. */
-    private static final Set<String> LEGAL_SUFFIXES = new HashSet<>(Arrays.asList(
-            "ltd", "lt", "limited", "inc", "incorporated", "co", "corp", "corporation", "plc", "llc",
-            "company", "gmbh", "sa", "sarl"));
     /** Words ignored everywhere in a company name. */
     private static final Set<String> STOP_WORDS = new HashSet<>(Arrays.asList("and", "the", "of"));
-    /** Free e-mail providers: their domain says nothing about someone's employer. */
-    public static final Set<String> GENERIC_DOMAINS = new HashSet<>(Arrays.asList(
-            "gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "btinternet.com"));
+
+    /** Words that only say what kind of company it is ("ltd", "gmbh"), lower case, dropped from the end of a name. */
+    private final Set<String> legalSuffixes;
+    /** Free e-mail provider domains, lower case: they say nothing about someone's employer. */
+    private final Set<String> genericDomains;
+    /** A capitalised name ending in a legal suffix, in running text ("... from Mueller GmbH about ..."). */
+    private final Pattern companyInText;
+
+    public NameMatcher(Collection<String> legalSuffixes, Collection<String> genericDomains) {
+        this.legalSuffixes = lowerCase(legalSuffixes);
+        this.genericDomains = lowerCase(genericDomains);
+        this.companyInText = companyInTextPattern(this.legalSuffixes);
+    }
+
 
     /** Penalty per candidate word the mention leaves out ("Falcon Aerospace" misses "Components"). */
     private static final double TRUNCATION_PENALTY_PER_WORD = 0.08;
@@ -125,8 +132,8 @@ public final class NameMatcher {
      * Lower case, "&amp;" read as "and", punctuation removed, stop words removed, and legal suffixes
      * removed from the end (but never the only word: "Company" stays [company]).
      */
-    private static List<String> companyWords(String name, boolean keepLegalSuffixes) {
-        String cleaned = name.toLowerCase().replace("&", " and ").replaceAll("[^a-z0-9 ]+", " ");
+    private List<String> companyWords(String name, boolean keepLegalSuffixes) {
+        String cleaned = plainLetters(name).toLowerCase().replace("&", " and ").replaceAll("[^a-z0-9 ]+", " ");
         List<String> words = new ArrayList<>();
         for (String word : cleaned.trim().split("\\s+")) {
             if (!word.isEmpty() && !STOP_WORDS.contains(word)) {
@@ -134,7 +141,7 @@ public final class NameMatcher {
             }
         }
         if (!keepLegalSuffixes) {
-            while (words.size() > 1 && LEGAL_SUFFIXES.contains(words.get(words.size() - 1))) {
+            while (words.size() > 1 && legalSuffixes.contains(words.get(words.size() - 1))) {
                 words.remove(words.size() - 1);
             }
         }
@@ -142,7 +149,7 @@ public final class NameMatcher {
     }
 
     /** The key a company entity is stored under: "Acme Corporation" and "ACME Corp." both become "acme". */
-    public static String companyKey(String name) {
+    public String companyKey(String name) {
         return join(companyWords(name, false), " ");
     }
 
@@ -152,7 +159,7 @@ public final class NameMatcher {
      *
      * @param truncated the mention is known to be cut off (e.g. a filename), so its last word may be any prefix
      */
-    public static Match matchCompany(String mention, String candidate, boolean truncated) {
+    public Match matchCompany(String mention, String candidate, boolean truncated) {
         List<String> mentionWords = companyWords(mention, false);
         List<String> candidateWords = companyWords(candidate, false);
         if (mentionWords.isEmpty() || candidateWords.isEmpty()) {
@@ -324,7 +331,7 @@ public final class NameMatcher {
      * company's full first word followed by the start of each next word, in order; legal words may be
      * skipped. 'ironbridgeauto.co.uk' ~ 'Ironbridge Automotive Ltd' ("ironbridge" + "auto").
      */
-    public static Match matchDomain(String domain, String candidate) {
+    public Match matchDomain(String domain, String candidate) {
         String label = domain.toLowerCase().split("\\.")[0].replaceAll("[^a-z0-9]", "");
         List<String> candidateWords = companyWords(candidate, true);
         if (label.isEmpty() || candidateWords.isEmpty() || !label.startsWith(candidateWords.get(0))) {
@@ -338,7 +345,7 @@ public final class NameMatcher {
      * True when the label from {@code position} on is made of prefixes (2+ letters) of the candidate
      * words from {@code wordIndex} on, in order. Tries the longest prefix first; a legal word may be skipped.
      */
-    private static boolean restOfLabelMatches(String label, int position, List<String> candidateWords, int wordIndex) {
+    private boolean restOfLabelMatches(String label, int position, List<String> candidateWords, int wordIndex) {
         if (position == label.length()) {
             return true;   // the whole label is used up
         }
@@ -352,15 +359,76 @@ public final class NameMatcher {
                 return true;
             }
         }
-        return LEGAL_SUFFIXES.contains(word) && restOfLabelMatches(label, position, candidateWords, wordIndex + 1);
+        return legalSuffixes.contains(word) && restOfLabelMatches(label, position, candidateWords, wordIndex + 1);
+    }
+
+    /** gmail.com, outlook.com, ...: says nothing about someone's employer. */
+    public boolean isGenericDomain(String domain) {
+        return genericDomains.contains(domain.toLowerCase());
+    }
+
+    /** "Harbor Robotics Inc": some word of the name is a legal suffix. */
+    public boolean hasLegalSuffix(String name) {
+        for (String word : companyWords(name, true)) {
+            if (legalSuffixes.contains(word)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Company names in running text: runs of capitalised words ending in a legal suffix, e.g. "Mueller GmbH"
+     * in "Spoke with José Müller from Mueller GmbH about ...". A leading "The" / "Our" is not part of the name.
+     */
+    public List<String> findCompanyNames(String text) {
+        List<String> names = new ArrayList<>();
+        Matcher m = companyInText.matcher(text);
+        while (m.find()) {
+            // a trailing "." may just end the sentence; names are compared without punctuation anyway
+            String name = m.group(1).trim().replaceFirst("\\.$", "")
+                    .replaceFirst("^(?:The|Our|Your|Dear|Hi|Hello|Attn|From|To|With|For|And)\\s+", "");
+            if (name.contains(" ")) {   // at least one word besides the suffix
+                names.add(name);
+            }
+        }
+        return names;
+    }
+
+    /** \b(Capitalised words... Suffix)\b, where the suffix starts with a capital ("GmbH", "Inc", "Ltd."). */
+    private static Pattern companyInTextPattern(Set<String> legalSuffixes) {
+        StringBuilder suffixes = new StringBuilder();
+        for (String suffix : legalSuffixes) {
+            suffixes.append(suffixes.length() == 0 ? "" : "|").append(Pattern.quote(suffix));
+        }
+        String word = "\\p{Lu}[\\p{L}\\p{M}'’-]*";   // no '.': a name does not continue past the end of a sentence
+        return Pattern.compile("(?<![\\p{L}\\p{M}])((?:(?:" + word + "|&)[ \\t]+){1,6}(?=\\p{Lu})(?i:" + suffixes + ")\\.?)(?![\\p{L}\\p{M}])");
+    }
+
+    private static Set<String> lowerCase(Collection<String> values) {
+        Set<String> out = new HashSet<>();
+        for (String value : values) {
+            out.add(value.toLowerCase());
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ people
 
     /** "Thomas  Bianchi" / "thomas bianchi" -> "thomas bianchi": lower case, letters and spaces only. */
     public static String personKey(String name) {
-        String cleaned = name.toLowerCase().replace('’', '\'').replaceAll("[^a-z' -]", "");
+        String cleaned = plainLetters(name).toLowerCase().replace('’', '\'').replaceAll("[^a-z' -]", "");
         return cleaned.replaceAll("\\s+", " ").trim();
+    }
+
+    /**
+     * "José Müller" -> "Jose Mueller": German umlauts are spelled out the way Germans write them without
+     * umlauts (ü -> ue, ß -> ss), other accents are dropped (é -> e). So both spellings of a name compare equal.
+     */
+    public static String plainLetters(String name) {
+        String spelledOut = name.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
+                .replace("Ä", "Ae").replace("Ö", "Oe").replace("Ü", "Ue").replace("ß", "ss");
+        return Normalizer.normalize(spelledOut, Normalizer.Form.NFD).replaceAll("\\p{M}", "");
     }
 
     /** 'R. Bianchi' -> {"r", "bianchi"}; null for full names. */

@@ -1,6 +1,5 @@
 package com.dubsof.graph.extract.parsers;
 
-import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
@@ -63,10 +62,12 @@ public class LetterParser implements Parser {
         if (job != null) {
             ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, job, MentionRole.DOC_JOB_FIELD, 0.9, "company_mention", folderCompany), RelationType.HAS_DOCUMENT, doc);
         }
-        String ownerFirstWord = Config.ownerName.split(" ")[0];
+        // the line under the signatory's name ("Project Manager, Harbor Robotics Inc") names the owner: staff
+        String ownerFirstWord = ex.dataset.owner.isKnown() ? ex.dataset.owner.name.split(" ")[0] : null;
         for (int i = 0; i < lines.size(); i++) {
             if (SIGNOFF.matcher(lines.get(i)).matches() && i + 1 < lines.size()) {
-                Integer org = i + 2 < lines.size() && lines.get(i + 2).contains(ownerFirstWord) ? owner(ex) : null;
+                boolean namesOwner = ownerFirstWord != null && i + 2 < lines.size() && lines.get(i + 2).contains(ownerFirstWord);
+                Integer org = namesOwner ? owner(ex) : null;
                 String jobTitle = i + 2 < lines.size() ? lines.get(i + 2).split(",")[0] : null;
                 ex.fact(personWithOrg(ex, lines.get(i + 1), MentionRole.SIGNATORY, org, "job_title", jobTitle), RelationType.AUTHORED, doc);
             }

@@ -11,7 +11,7 @@ public class EntityRow {
     public EntityType etype;
     /** Canonical name. */
     public String name;
-    /** Identity key, unique per type (e.g. "acme", "JOB-2024-0006", "QUO-5238"). */
+    /** Identity key, unique per type (e.g. "acme" for a company, a job id for a project, "QUO-5238" for a document). */
     public String key;
     public Map<String, Object> attrs;
     /** Number of relations; only filled by queries that compute it, otherwise null. */

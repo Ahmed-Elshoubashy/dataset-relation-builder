@@ -2,6 +2,10 @@ package com.dubsof.graph;
 
 import com.dubsof.graph.dao.FilesDao;
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.dataset.Dataset;
+import com.dubsof.graph.dataset.FolderContext;
+import com.dubsof.graph.dataset.Owner;
+import com.dubsof.graph.dataset.Profile;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.Extractor;
 import com.dubsof.graph.ingest.FileKind;
@@ -12,12 +16,17 @@ import com.dubsof.graph.resolve.Resolver;
 import com.dubsof.graph.resolve.RuleAdjudicator;
 import com.dubsof.graph.util.Text;
 
+import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.Connection;
 
 /** Builds small graphs for tests: a temporary graph.db, files with their text, and the real stages. */
 public final class TestGraph {
+
+    /** The john-doe dataset: its profile (profiles/john-doe.json) and its owner, as detected from the letterheads. */
+    public static final Dataset JOHN_DOE = new Dataset(
+            new Owner("Meridian Packaging Systems Ltd", "meridianpackaging.co.uk"), johnDoeProfile());
 
     private static final FilesDao filesDao = new FilesDao();
 
@@ -31,9 +40,17 @@ public final class TestGraph {
         return conn;
     }
 
+    public static Profile johnDoeProfile() {
+        try {
+            return Profile.read(new File("profiles/john-doe.json"));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /**
      * A file row as the Ingestor would build it, without a database. The folder context comes from the path,
-     * like the Ingestor does: "Customers/&lt;company&gt;/&lt;JOB-... title&gt;/&lt;category&gt;/name".
+     * read with the john-doe profile's folder layout, like the Ingestor does.
      * {@code text} null means the file could not be read (status needs_ocr).
      */
     public static FileRow row(String path, FileKind kind, String text) {
@@ -46,15 +63,13 @@ public final class TestGraph {
         row.sha256 = Text.sha256(path.getBytes(StandardCharsets.UTF_8));
         row.blobPath = "unused";
         row.size = text == null ? 100 : text.length();
-        String[] parts = path.split("/");
-        row.area = parts.length > 1 ? parts[0] : null;
-        if (parts[0].equals("Customers") && parts.length > 2) {
-            row.folderCompany = parts[1];
-            if (parts.length > 3 && parts[2].startsWith("JOB-")) {
-                row.folderJob = parts[2];
-                row.folderCategory = parts.length > 4 ? parts[3] : null;
-            }
-        }
+        FolderContext ctx = JOHN_DOE.profile.folderContext(path);
+        row.area = ctx.area;
+        row.folderCompany = ctx.company;
+        row.folderJob = ctx.job;
+        row.folderJobId = ctx.jobId;
+        row.folderJobTitle = ctx.jobTitle;
+        row.folderCategory = ctx.category;
         return row;
     }
 
@@ -73,9 +88,9 @@ public final class TestGraph {
     }
 
     /** Runs extract, resolve (with the default rule adjudicator) and relate on the files already stored. */
-    public static void buildGraph(Connection conn) throws Exception {
-        Extractor.run(conn);
-        new Resolver(conn, new RuleAdjudicator()).run();
-        Relator.run(conn);
+    public static void buildGraph(Connection conn, Dataset dataset) throws Exception {
+        Extractor.run(conn, dataset, null);
+        new Resolver(conn, new RuleAdjudicator(), dataset).run();
+        Relator.run(conn, dataset);
     }
 }

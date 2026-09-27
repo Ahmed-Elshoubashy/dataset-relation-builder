@@ -57,7 +57,7 @@ public class GraphQueries {
                     + " FROM mentions m JOIN files f ON f.id = m.file_id WHERE m.entity_id = ?"
                     + " ORDER BY m.role = 'self' DESC, f.path LIMIT ?";
 
-    /** Customers and their filed projects (projects only seen in screenshots are left out). */
+    /** Companies and their filed projects (projects only seen in screenshots are left out). */
     private static final String OVERVIEW_NODE_IDS =
             "SELECT id FROM entities WHERE etype = 'project' AND json_extract(attrs, '$.source') = 'folder'"
                     + " UNION SELECT r.src FROM relations r JOIN entities p ON p.id = r.dst"

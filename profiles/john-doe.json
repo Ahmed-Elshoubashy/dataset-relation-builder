@@ -1,0 +1,12 @@
+{
+  "_comment": "Conventions of the john-doe sample dataset. Use it with ERKG_PROFILE=profiles/john-doe.json, or copy it into the dataset folder as profile.json.",
+  "folderPatterns": [
+    "Customers/{company}/{job_id:JOB-\\d{4}-\\d{4}} {title}/{category}/**",
+    "Customers/{company}/{job_id:JOB-\\d{4}-\\d{4}} {title}/**",
+    "Customers/{company}/**"
+  ],
+  "owner": null,
+  "genericEmailDomains": ["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "btinternet.com"],
+  "legalSuffixes": ["ltd", "lt", "limited", "inc", "incorporated", "co", "corp", "corporation", "plc", "llc",
+                    "company", "gmbh", "sa", "sarl"]
+}

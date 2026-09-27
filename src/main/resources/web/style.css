@@ -204,11 +204,11 @@ dialog.analyze form { display: flex; flex-direction: column; min-height: 0; flex
 .an-field { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
 .an-label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; padding: 0; }
 .an-path-row { display: flex; gap: 8px; }
-.an-path-row input, .an-key input {
+.an-path-row input, .an-key input, #an-owner {
   flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--panel-2); font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; outline: none;
 }
-.an-path-row input:focus, .an-key input:focus { border-color: var(--accent); background: var(--panel); }
+.an-path-row input:focus, .an-key input:focus, #an-owner:focus { border-color: var(--accent); background: var(--panel); }
 .browser { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .browser-head, .browser-foot { display: flex; gap: 10px; align-items: center; padding: 8px 10px; background: var(--panel-2); }
 .browser-foot { justify-content: space-between; font-size: 12.5px; color: var(--muted); }
@@ -250,3 +250,7 @@ dialog.analyze form { display: flex; flex-direction: column; min-height: 0; flex
   .details.open { transform: none; }
   .stats { display: none; }
 }
+
+.an-optional { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 4px; }
+.an-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--muted); }
+.an-check input { margin-top: 3px; }

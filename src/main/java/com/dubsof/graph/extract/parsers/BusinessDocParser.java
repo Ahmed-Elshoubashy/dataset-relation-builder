@@ -27,11 +27,11 @@ import static com.dubsof.graph.extract.parsers.ParserUtils.join;
 /** Invoices, quotations, purchase orders and delivery notes: number, bill-to company, line items and totals. */
 public class BusinessDocParser implements Parser {
 
-    /** A currency sign: '£', or the garbled '·' / '?' seen in some exports. */
-    private static final String CUR = "[^\\d\\s|]?\\s?";
-    private static final String MONEY = CUR + "([\\d,]+\\.\\d{2})";
-    private static final Pattern LINE_ITEM = Pattern.compile("^(?<desc>.+?)\\s+(?<qty>\\d+)\\s+(?<unit>[a-z]+)\\s+" + CUR
-            + "(?<price>[\\d,]+\\.\\d{2})\\s+" + CUR + "(?<total>[\\d,]+\\.\\d{2})\\s*$");
+    /** An amount with its currency sign or code, before or after it (see Money). */
+    private static final String MONEY = Money.BEFORE + "(" + Money.AMOUNT + ")" + Money.AFTER;
+    private static final Pattern LINE_ITEM = Pattern.compile("^(?<desc>.+?)\\s+(?<qty>\\d+)\\s+(?<unit>[a-z]+)\\s+"
+            + Money.BEFORE + "(?<price>" + Money.AMOUNT + ")" + Money.AFTER + "\\s+"
+            + Money.BEFORE + "(?<total>" + Money.AMOUNT + ")" + Money.AFTER + "\\s*$");
     private static final Pattern TOTAL_LINE = Pattern.compile("^(Subtotal|Tax \\(\\d+%\\)|TOTAL)\\s*:?\\s*" + MONEY + "$", Pattern.CASE_INSENSITIVE);
     /** Header line -> document type. */
     private static final Map<String, String> DOC_TYPES = new LinkedHashMap<String, String>();
@@ -71,6 +71,7 @@ public class BusinessDocParser implements Parser {
         List<String> lines = joinTableRows(cleaned);
         List<Map<String, Object>> items = new ArrayList<Map<String, Object>>();
         Map<String, Double> totals = new HashMap<String, Double>();
+        String currency = null;   // from the total line, else from the first line item
         for (String l : lines) {
             Matcher m = LINE_ITEM.matcher(l);
             Matcher t = TOTAL_LINE.matcher(l);
@@ -79,16 +80,23 @@ public class BusinessDocParser implements Parser {
                 it.put("desc", m.group("desc"));
                 it.put("qty", Integer.parseInt(m.group("qty")));
                 it.put("unit", m.group("unit"));
-                it.put("price", money(m.group("price")));
-                it.put("total", money(m.group("total")));
+                it.put("price", Money.parse(m.group("price")));
+                it.put("total", Money.parse(m.group("total")));
                 items.add(it);
+                if (currency == null) {
+                    currency = Money.currency(l);
+                }
             } else if (t.matches()) {
-                totals.put(t.group(1).split(" ")[0].toLowerCase(), money(t.group(2)));
+                String label = t.group(1).split(" ")[0].toLowerCase();
+                totals.put(label, Money.parse(t.group(2)));
+                if (label.equals("total") && Money.currency(l) != null) {
+                    currency = Money.currency(l);
+                }
             }
         }
 
         Integer doc = document(ex, row, docType, key, key, "date", date, "job_title", job,
-                "total", totals.get("total"), "subtotal", totals.get("subtotal"),
+                "total", totals.get("total"), "subtotal", totals.get("subtotal"), "currency", currency,
                 "line_items", items.isEmpty() ? null : items);
 
         // Bill-to block: company, address lines, Attn
@@ -134,7 +142,7 @@ public class BusinessDocParser implements Parser {
 
     /** PDF text sometimes puts each table cell on its own line; stitch 5-cell item rows back together. */
     private static List<String> joinTableRows(List<String> lines) {
-        Pattern money = Pattern.compile("^" + CUR + "[\\d,]+\\.\\d{2}$");
+        Pattern money = Pattern.compile("^" + Money.BEFORE + Money.AMOUNT + Money.AFTER + "$");
         List<String> out = new ArrayList<String>();
         int i = 0;
         while (i < lines.size()) {
@@ -156,7 +164,4 @@ public class BusinessDocParser implements Parser {
         return out;
     }
 
-    private static double money(String s) {
-        return Double.parseDouble(s.replace(",", ""));
-    }
 }

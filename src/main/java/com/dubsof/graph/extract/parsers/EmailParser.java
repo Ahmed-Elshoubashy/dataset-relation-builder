@@ -7,21 +7,19 @@ import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.FileKind;
 
-import javax.mail.internet.AddressException;
 import javax.mail.internet.InternetAddress;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static com.dubsof.graph.extract.parsers.ParserUtils.document;
+import static com.dubsof.graph.extract.parsers.ParserUtils.nameFromAddress;
 import static com.dubsof.graph.extract.parsers.ParserUtils.refs;
 import static com.dubsof.graph.extract.parsers.ParserUtils.personWithOrg;
+import static com.dubsof.graph.extract.parsers.ParserUtils.addresses;
 import static com.dubsof.graph.extract.parsers.ParserUtils.companyFromDomain;
 import static com.dubsof.graph.extract.parsers.ParserUtils.stem;
-import static com.dubsof.graph.extract.parsers.ParserUtils.join;
 
 /** E-mails (.eml): sender and recipients as people of their domain's company, plus the project in the subject. */
 public class EmailParser implements Parser {
@@ -76,29 +74,5 @@ public class EmailParser implements Parser {
         }
         refs(ex, subject + "\n" + body, null);
         return true;
-    }
-
-    private static List<InternetAddress> addresses(String header) {
-        List<InternetAddress> out = new ArrayList<InternetAddress>();
-        if (header == null) {
-            return out;
-        }
-        try {
-            for (InternetAddress a : InternetAddress.parseHeader(header, false)) {
-                out.add(a);
-            }
-        } catch (AddressException e) {
-            // unparseable header: no people from it
-        }
-        return out;
-    }
-
-    /** "isla.patel@x.com" -> "Isla Patel" */
-    private static String nameFromAddress(String addr) {
-        List<String> words = new ArrayList<String>();
-        for (String w : addr.substring(0, addr.indexOf('@')).split("\\.")) {
-            words.add(w.isEmpty() ? w : Character.toUpperCase(w.charAt(0)) + w.substring(1).toLowerCase());
-        }
-        return join(words, " ");
     }
 }

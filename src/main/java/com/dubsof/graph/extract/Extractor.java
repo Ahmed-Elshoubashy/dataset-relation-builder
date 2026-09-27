@@ -4,6 +4,7 @@ import com.dubsof.graph.dao.FactsDao;
 import com.dubsof.graph.dao.FilesDao;
 import com.dubsof.graph.dao.MentionsDao;
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.dataset.Dataset;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.parsers.BusinessDocParser;
 import com.dubsof.graph.extract.parsers.CalendarParser;
@@ -14,6 +15,7 @@ import com.dubsof.graph.extract.parsers.DrawingParser;
 import com.dubsof.graph.extract.parsers.EmailParser;
 import com.dubsof.graph.extract.parsers.FilenameDocument;
 import com.dubsof.graph.extract.parsers.ItemListParser;
+import com.dubsof.graph.extract.parsers.LlmParser;
 import com.dubsof.graph.extract.parsers.LetterParser;
 import com.dubsof.graph.extract.parsers.ManualParser;
 import com.dubsof.graph.extract.parsers.MeetingNotesParser;
@@ -57,7 +59,9 @@ import static com.dubsof.graph.extract.parsers.ParserUtils.stem;
  *   <li>no parser matched, or the file is unread: a document from the file name only;</li>
  *   <li>hints in the file name: company and product code;</li>
  *   <li>the document is linked to its folder project (or folder customer);</li>
- *   <li>document numbers and JOB codes cited anywhere in the text.</li>
+ *   <li>document numbers and job ids cited anywhere in the text;</li>
+ *   <li>the general extractor (LlmParser), for files no template recognised and for the free text of e-mails,
+ *       letters and meeting notes: every company, person, project, document and product the text names.</li>
  * </ol>
  */
 public class Extractor {
@@ -71,6 +75,7 @@ public class Extractor {
     /** ...unless the code is really a document number: "INV-8002_Acme Corporation". */
     private static final Pattern FILENAME_DOCUMENT_NUMBER = Pattern.compile("^(INV|QUO|PO|DN|DWG|CAL)-");
 
+    private final Dataset dataset;
     private final FilesDao filesDao = new FilesDao();
     private final MentionsDao mentionsDao = new MentionsDao();
     private final FactsDao factsDao = new FactsDao();
@@ -95,14 +100,46 @@ public class Extractor {
         new ScreenshotTableParser(),
     };
 
+    /** Tried after the templates: reads free text with Claude, or with rules offline. */
+    private final LlmParser freeText;
+
+    public Extractor(Dataset dataset, LlmParser freeText) {
+        this.dataset = dataset;
+        this.freeText = freeText;
+    }
+
+    /** Offline: the general extractor uses its rules. */
+    public Extractor(Dataset dataset) {
+        this(dataset, new LlmParser());
+    }
+
+    /** An extractor for a dataset with no known owner, offline. */
+    public Extractor() {
+        this(Dataset.unknown());
+    }
+
     /** The mentions made from the folder a file sits in (indices in the Extraction, or null). */
-    private static class FolderContext {
+    private static class FolderMentions {
         final Integer customerMention;
         final Integer projectMention;
 
-        FolderContext(Integer customerMention, Integer projectMention) {
+        FolderMentions(Integer customerMention, Integer projectMention) {
             this.customerMention = customerMention;
             this.projectMention = projectMention;
+        }
+    }
+
+    /** One file after the template steps, waiting for the general extractor (which may ask Claude about many files at once). */
+    private static class TemplateResult {
+        final Extraction ex;
+        final FolderMentions folder;
+        /** The text for the general extractor, or null when it has nothing to add. */
+        final String freeText;
+
+        TemplateResult(Extraction ex, FolderMentions folder, String freeText) {
+            this.ex = ex;
+            this.folder = folder;
+            this.freeText = freeText;
         }
     }
 
@@ -110,19 +147,27 @@ public class Extractor {
 
     /** Everything one file says: its mentions, the facts between them, and which mention is its own document. */
     public Extraction extractFile(FileRow row) {
-        Extraction ex = new Extraction(row.id);
+        TemplateResult result = extractWithTemplates(row);
+        addFreeText(result, row);
+        return result.ex;
+    }
+
+    /** Steps 1-6: the folder, the templates, the file name and the references. */
+    private TemplateResult extractWithTemplates(FileRow row) {
+        Extraction ex = new Extraction(row.id, dataset);
         String text = row.text == null ? "" : row.text;
         String stem = stem(row.path);
 
-        FolderContext folder = addFolderContext(ex, row);
+        FolderMentions folder = addFolderContext(ex, row);
+        Parser recognisedBy = null;
         if (row.status == FileStatus.OK) {
-            runParsers(ex, row, text, folder);
+            recognisedBy = runParsers(ex, row, text, folder);
         }
         if (ex.doc == null) {
             addDocumentFromFilename(ex, row, text, stem);
         }
         if (ex.doc == null) {
-            return ex;   // a blank file no parser recognised: nothing to link
+            return new TemplateResult(ex, folder, null);   // a blank file no parser recognised: nothing to link
         }
         addFilenameHints(ex, stem);
         linkDocumentToFolder(ex, folder);
@@ -131,39 +176,67 @@ public class Extractor {
         if (!text.isEmpty() && !"email".equals(ex.docMention().attrs.get("doc_type"))) {
             refs(ex, text, (String) ex.docMention().attrs.get("key"));
         }
-        return ex;
+        return new TemplateResult(ex, folder, freeTextOf(row, text, recognisedBy));
     }
 
     /**
-     * Mentions from the folder path "Customers/Acme Corporation/JOB-2023-0003 Shrink Wrap Retrofit/...":
-     * company "Acme Corporation", project "Shrink Wrap Retrofit" (job_id JOB-2023-0003), and
+     * What the general extractor should read: the whole text of a file no template recognised, the body of
+     * an e-mail (its headers are already read), the whole of a letter or meeting notes; null for the rest,
+     * whose template fields already cover what they say.
+     */
+    private static String freeTextOf(FileRow row, String text, Parser recognisedBy) {
+        if (row.status != FileStatus.OK || Text.isBlank(text)) {
+            return null;
+        }
+        if (recognisedBy == null || recognisedBy instanceof LetterParser || recognisedBy instanceof MeetingNotesParser) {
+            return text;
+        }
+        if (recognisedBy instanceof EmailParser) {
+            int bodyStart = text.indexOf("\n\n");
+            return bodyStart < 0 ? null : text.substring(bodyStart + 2);
+        }
+        return null;
+    }
+
+    /** Step 7: the general extractor. */
+    private void addFreeText(TemplateResult result, FileRow row) {
+        if (result.freeText != null) {
+            freeText.parse(result.ex, row, result.freeText, result.folder.customerMention, result.folder.projectMention);
+        }
+    }
+
+    /**
+     * Mentions from the folder path, read with the profile's folder layout, e.g. "Clients/Acme/P-12 Line Upgrade/...":
+     * company "Acme", project "Line Upgrade" (job_id P-12), and
      * the fact "company HAS_PROJECT project". The Ingestor already split the path into these parts.
      */
-    private FolderContext addFolderContext(Extraction ex, FileRow row) {
+    private FolderMentions addFolderContext(Extraction ex, FileRow row) {
         Integer customer = null;
         Integer project = null;
         if (row.folderCompany != null) {
             customer = ex.addMention(EntityType.COMPANY, row.folderCompany, MentionRole.FOLDER);
         }
-        if (row.folderJob != null) {
-            Matcher jobFolder = Ingestor.JOB_DIR.matcher(row.folderJob);   // "JOB-2023-0003 Shrink Wrap Retrofit"
-            if (jobFolder.matches()) {
-                String jobId = jobFolder.group(1);
-                String title = jobFolder.group(2);
-                project = ex.addMention(EntityType.PROJECT, title, MentionRole.FOLDER, "job_id", jobId, "company_mention", customer);
-                ex.fact(customer, RelationType.HAS_PROJECT, project);
-            }
+        if (row.folderJobId != null) {
+            String title = row.folderJobTitle != null ? row.folderJobTitle : row.folderJobId;
+            project = ex.addMention(EntityType.PROJECT, title, MentionRole.FOLDER, "job_id", row.folderJobId,
+                    "company_mention", customer);
+            ex.fact(customer, RelationType.HAS_PROJECT, project);
         }
-        return new FolderContext(customer, project);
+        return new FolderMentions(customer, project);
     }
 
-    /** Tries each parser in order; the first one that recognises the template adds the file's mentions and facts. */
-    private void runParsers(Extraction ex, FileRow row, String text, FolderContext folder) {
+    /**
+     * Tries each parser in order; the first one that recognises the template adds the file's mentions and facts.
+     *
+     * @return that parser, or null when none recognised the file
+     */
+    private Parser runParsers(Extraction ex, FileRow row, String text, FolderMentions folder) {
         for (Parser parser : parsers) {
             if (parser.parse(ex, row, text, folder.customerMention, folder.projectMention)) {
-                return;
+                return parser;
             }
         }
+        return null;
     }
 
     /**
@@ -205,7 +278,7 @@ public class Extractor {
     }
 
     /** The folder's project HAS_DOCUMENT this document; a file with no JOB folder is FILED_UNDER its customer instead. */
-    private void linkDocumentToFolder(Extraction ex, FolderContext folder) {
+    private void linkDocumentToFolder(Extraction ex, FolderMentions folder) {
         ex.fact(folder.projectMention, RelationType.HAS_DOCUMENT, ex.doc);
         if (folder.projectMention == null) {
             ex.fact(ex.doc, RelationType.FILED_UNDER, folder.customerMention);
@@ -215,8 +288,11 @@ public class Extractor {
     // ================================================================ the whole stage
 
     /** Extracts every file (except skipped ones and zips, whose members are files of their own) and stores the result. */
-    public static Map<String, Integer> run(Connection conn) throws Exception {
-        return new Extractor().extractAll(conn);
+    /**
+     * @param llmApiKey the key the general extractor uses to ask Claude; null reads free text with rules, offline
+     */
+    public static Map<String, Integer> run(Connection conn, Dataset dataset, String llmApiKey) throws Exception {
+        return new Extractor(dataset, new LlmParser(llmApiKey)).extractAll(conn);
     }
 
     private Map<String, Integer> extractAll(Connection conn) throws Exception {
@@ -225,8 +301,24 @@ public class Extractor {
         int mentionCount = 0;
         int factCount = 0;
 
+        // Templates first, for every file; then the general extractor, so Claude gets all its files at once.
+        List<TemplateResult> results = new ArrayList<>();
+        List<FileRow> freeTextFiles = new ArrayList<>();
+        List<String> freeTexts = new ArrayList<>();
         for (FileRow file : files) {
-            Extraction ex = extractFile(file);
+            TemplateResult result = extractWithTemplates(file);
+            results.add(result);
+            if (result.freeText != null) {
+                freeTextFiles.add(file);
+                freeTexts.add(result.freeText);
+            }
+        }
+        freeText.prepare(freeTextFiles, freeTexts);
+
+        for (int i = 0; i < files.size(); i++) {
+            FileRow file = files.get(i);
+            addFreeText(results.get(i), file);
+            Extraction ex = results.get(i).ex;
             List<Long> mentionIds = saveExtraction(conn, file, ex);
             if (ex.doc != null) {
                 documentMentionOfFile.put(file.id, mentionIds.get(ex.doc));
@@ -241,6 +333,7 @@ public class Extractor {
         summary.put("files", files.size());
         summary.put("mentions", mentionCount);
         summary.put("facts", factCount);
+        summary.put("free_text_files", freeTextFiles.size());
         return summary;
     }
 

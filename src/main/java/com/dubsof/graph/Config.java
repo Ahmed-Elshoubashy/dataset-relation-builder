@@ -17,7 +17,6 @@ public final class Config {
     public static final File WORK_DIR = new File(env("ERKG_WORK_DIR", "data")).getAbsoluteFile();
     public static final File DB_FILE = new File(WORK_DIR, "graph.db");
     public static final File OCR_CACHE_FILE = new File(WORK_DIR, "ocr_cache.db");
-    public static final File BLOB_DIR = new File(WORK_DIR, "blobs");
 
     public static final int OCR_WORKERS = Integer.parseInt(env("ERKG_OCR_WORKERS", "8"));
     public static final String CLAUDE_MODEL = env("ERKG_CLAUDE_MODEL", "claude-opus-5");
@@ -28,10 +27,15 @@ public final class Config {
     /** Who decides borderline company matches: "rules" or "claude". */
     public static final AdjudicatorType ADJUDICATOR = AdjudicatorType.fromValue(env("ERKG_ADJUDICATOR", "rules"));
 
-    /** The organisation that owns the file share. Replaced by auto-detection during an analysis. */
-    public static String ownerName = env("ERKG_OWNER", "Meridian Packaging Systems Ltd");
-    // TODO check where the domain is used
-    public static String ownerDomain = env("ERKG_OWNER_DOMAIN", "meridianpackaging.co.uk");
+    /**
+     * Optional: the organisation that owns the file share, and its e-mail domain. Normally detected from
+     * the files during an analysis; set these only to override the detection.
+     */
+    public static final String OWNER = envOrNull("ERKG_OWNER");
+    public static final String OWNER_DOMAIN = envOrNull("ERKG_OWNER_DOMAIN");
+
+    /** Optional: a profile.json to use instead of the one in the dataset's root folder (see dataset.Profile). */
+    public static final String PROFILE = envOrNull("ERKG_PROFILE");
 
     /** When set (Docker), the dataset picker cannot leave this folder. */
     public static final File BROWSE_ROOT = System.getenv("ERKG_BROWSE_ROOT") != null
@@ -44,6 +48,11 @@ public final class Config {
     public static String apiKeyFromEnv() {
         String key = System.getenv("ANTHROPIC_API_KEY");
         return key == null || key.trim().isEmpty() ? null : key.trim();
+    }
+
+    private static String envOrNull(String name) {
+        String v = System.getenv(name);
+        return v == null || v.trim().isEmpty() ? null : v.trim();
     }
 
     private static String env(String name, String fallback) {

@@ -27,7 +27,7 @@ const REL = {
   MENTIONS: ["Mentions", "Mentioned in"],
   INVOLVED_IN: ["Involved in", "People involved"],
   USES_PRODUCT: ["Uses products", "Used in projects"],
-  PURCHASED_OR_QUOTED: ["Bought / quoted", "Customers"],
+  PURCHASED_OR_QUOTED: ["Bought / quoted", "Bought by"],
   FILED_UNDER: ["Filed under", "Filed documents"],
 };
 const METHOD_HELP = {
@@ -46,6 +46,8 @@ const METHOD_HELP = {
   doc_number: "same document number",
   product_code: "same product code",
   gazetteer: "found by searching free text for known aliases",
+  llm: "named in free text, as read by Claude (less certain than a template field)",
+  free_text: "named in free text, found by rules: signatures, addresses, names ending in Ltd / GmbH / Inc",
 };
 
 const $ = (s) => document.querySelector(s);
@@ -235,7 +237,7 @@ function renderDetails(e) {
   h += `<div class="section"><h4>Evidence <span class="n">${srcs.length} mentions</span></h4>` +
     srcs.slice(0, 60).map((s) => `<div class="src" data-file="${s.id}"><span class="kind">${esc(s.kind)}</span>
       <div><div class="p">${esc(s.path.replaceAll("::", " ▸ "))}</div>
-      <div class="m">as “${esc(s.surface)}” · ${esc(s.role.replaceAll("_", " "))}${s.method ? ` · ${esc(s.method)}` : ""}${s.status !== "ok" ? ` · <b>${esc(s.status.replace("_", " "))}</b>` : ""}</div></div></div>`).join("") +
+      <div class="m">as “${esc(s.surface)}” · <span title="${esc(METHOD_HELP[s.role] || "")}">${esc(s.role.replaceAll("_", " "))}</span>${s.method ? ` · ${esc(s.method)}` : ""}${s.status !== "ok" ? ` · <b>${esc(s.status.replace("_", " "))}</b>` : ""}</div></div></div>`).join("") +
     (srcs.length > 60 ? `<div class="list-footer">…and ${srcs.length - 60} more</div>` : "") + `</div>`;
 
   $("#details").innerHTML = h;
@@ -255,7 +257,14 @@ function renderDetails(e) {
     if (f) return openFile(+f.dataset.file, e);
   };
 }
-function money(v) { return v == null ? "" : "£" + Number(v).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+/** An amount in the document's currency (e.g. "USD"), or a plain number when the currency is unknown. */
+function money(v, currency) {
+  if (v == null) return "";
+  if (currency) {
+    try { return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(v); } catch (e) { /* not an ISO code */ }
+  }
+  return Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 function attrsHtml(e) {
   const a = { ...e.attrs };
   const rows = [];
@@ -276,8 +285,8 @@ function attrsHtml(e) {
   if (e.type === "document") {
     put("Date", a.date); put("Job", a.job_title); put("Subject", a.subject); put("Revision", a.revision);
     put("Instrument", a.instrument); put("Result", a.result); put("Valid until", a.valid_until || a.expiry);
-    if (a.subtotal != null) put("Subtotal", money(a.subtotal));
-    if (a.total != null) put("Total", money(a.total));
+    if (a.subtotal != null) put("Subtotal", money(a.subtotal, a.currency));
+    if (a.total != null) put("Total", money(a.total, a.currency));
     put("Copies", a.files ? `${a.files.length} file${a.files.length > 1 ? "s" : ""}` : null);
     put("Versions", (a.versions || []).join(", "));
     if (a.missing) put("Status", "referenced by other documents; no copy found");
@@ -286,7 +295,7 @@ function attrsHtml(e) {
   let h = rows.length ? `<div class="section"><h4>Details</h4><dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></div>` : "";
   if (a.line_items?.length) {
     h += `<div class="section"><h4>Line items <span class="n">${a.line_items.length}</span></h4><table class="items"><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Total</th></tr>` +
-      a.line_items.map((i) => `<tr><td>${esc(i.desc)}</td><td class="num">${i.qty}</td><td class="num">${money(i.price)}</td><td class="num">${money(i.total)}</td></tr>`).join("") + `</table></div>`;
+      a.line_items.map((i) => `<tr><td>${esc(i.desc)}</td><td class="num">${i.qty}</td><td class="num">${money(i.price, a.currency)}</td><td class="num">${money(i.total, a.currency)}</td></tr>`).join("") + `</table></div>`;
   }
   return h;
 }
@@ -358,7 +367,7 @@ async function openAnalyze() {
 }
 function syncOcrChoice() {
   const ocr = document.querySelector('input[name="ocr"]:checked').value;
-  $("#an-key-wrap").hidden = ocr !== "claude";
+  $("#an-key-wrap").hidden = ocr !== "claude" && !$("#an-llm").checked;
   $("#an-foot").textContent = ocr === "claude"
     ? `Uses ${analyzeOpts?.claude_model || "Claude"}. Only image-only files are sent; results are cached by content.`
     : ocr === "tesseract" ? "Runs locally. Slower on large scans." : "Takes about half a minute for ~4,000 files.";
@@ -404,7 +413,8 @@ function renderJob(job) {
   if (job.state === "done") {
     const e = job.result?.entities || {};
     const total = Object.values(e).reduce((a, b) => a + b, 0);
-    $("#an-detail").textContent = `Analysis complete: ${total.toLocaleString()} entities (${TYPES.map((t) => `${e[t.key] || 0} ${t.label.toLowerCase()}`).join(", ")}).`;
+    const owner = job.result?.owner ? ` Owner: ${job.result.owner}.` : " No owner organisation was found.";
+    $("#an-detail").textContent = `Analysis complete: ${total.toLocaleString()} entities (${TYPES.map((t) => `${e[t.key] || 0} ${t.label.toLowerCase()}`).join(", ")}).${owner}`;
   } else if (failed) {
     $("#an-detail").textContent = `The analysis stopped: ${job.error}`;
   } else {
@@ -429,6 +439,7 @@ function initAnalyze() {
   $("#btn-analyze").onclick = openAnalyze;
   dlg().querySelector("[data-close]").onclick = () => dlg().close();
   document.querySelectorAll('input[name="ocr"]').forEach((r) => (r.onchange = syncOcrChoice));
+  $("#an-llm").onchange = syncOcrChoice;
   $("#an-browse").onclick = () => {
     const box = $("#an-browser");
     box.hidden = !box.hidden;
@@ -454,7 +465,8 @@ function initAnalyze() {
     const ocr = document.querySelector('input[name="ocr"]:checked').value;
     const data_root = $("#an-path").value.trim();
     if (!data_root) return showError("Choose the folder that holds the dataset.");
-    if (ocr === "claude" && !$("#an-key").value.trim() && !analyzeOpts.env_key) {
+    const llm = $("#an-llm").checked;
+    if ((ocr === "claude" || llm) && !$("#an-key").value.trim() && !analyzeOpts.env_key) {
       $("#an-key").focus();
       return showError("Enter your Anthropic API key to use Claude, or pick another option.");
     }
@@ -466,7 +478,8 @@ function initAnalyze() {
       const r = await fetch("/api/analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data_root, ocr, api_key: ocr === "claude" ? $("#an-key").value.trim() || null : null }),
+        body: JSON.stringify({ data_root, ocr, llm, owner: $("#an-owner").value.trim() || null,
+          api_key: ocr === "claude" || llm ? $("#an-key").value.trim() || null : null }),
       });
       const body = await r.json();
       if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Couldn't start the analysis.");

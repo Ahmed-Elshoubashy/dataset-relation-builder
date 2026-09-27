@@ -1,8 +1,9 @@
 package com.dubsof.graph.ingest;
 
-import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.FilesDao;
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.dataset.FolderContext;
+import com.dubsof.graph.dataset.Profile;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.pipeline.Progress;
 import com.dubsof.graph.util.Text;
@@ -30,7 +31,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -44,7 +44,6 @@ import java.util.zip.ZipInputStream;
 public class Ingestor {
 
     public static final String MEMBER_SEP = "::";
-    public static final Pattern JOB_DIR = Pattern.compile("^(JOB-\\d{4}-\\d{4})\\s+(.+)$");
 
     private static final Set<String> IGNORED_NAMES = new HashSet<String>(Arrays.asList(".DS_Store", "Thumbs.db", "desktop.ini"));
     private static final Set<String> CODE_EXTS = new HashSet<String>(Arrays.asList(
@@ -54,16 +53,22 @@ public class Ingestor {
     private static final Pattern EMAIL_KEY_HEADER = Pattern.compile("^(From|MIME-Version|Content-Type):", Pattern.MULTILINE);
 
     private final Connection conn;
+    /** Where the bytes of zip members and e-mail attachments are stored (they have no file of their own). */
+    private final File blobDir;
+    /** Reads what each file's folder says (customer, project, category). */
+    private final Profile profile;
     private final FilesDao filesDao = new FilesDao();
     private int count;
 
-    public Ingestor(Connection conn) {
+    public Ingestor(Connection conn, File blobDir, Profile profile) {
         this.conn = conn;
+        this.blobDir = blobDir;
+        this.profile = profile;
     }
 
     /** Walks {@code root} and records every file. Returns the number of files recorded. */
-    public static int run(Connection conn, File root, Progress progress) throws Exception {
-        Ingestor ing = new Ingestor(conn);
+    public static int run(Connection conn, File root, File blobDir, Profile profile, Progress progress) throws Exception {
+        Ingestor ing = new Ingestor(conn, blobDir, profile);
         List<Path> paths = listFiles(root.toPath());
         for (int i = 0; i < paths.size(); i++) {
             Path path = paths.get(i);
@@ -102,7 +107,7 @@ public class Ingestor {
         return filePaths;
     }
 
-    /** "Customers/Acme Corporation/…/INV-8002.pdf": relative to root, always with '/' separators. */
+    /** "Sales/Invoices/INV-8002.pdf": relative to root, always with '/' separators. */
     private static String relativePath(Path root, Path path) {
         return root.relativize(path).toString().replace(File.separatorChar, '/');
     }
@@ -129,7 +134,7 @@ public class Ingestor {
         }
 
         if (ctx == null) {
-            ctx = FolderContext.of(rel);
+            ctx = profile.folderContext(rel);
         }
 
         FileRow row = new FileRow();
@@ -143,6 +148,8 @@ public class Ingestor {
         row.area = ctx.area;
         row.folderCompany = ctx.company;
         row.folderJob = ctx.job;
+        row.folderJobId = ctx.jobId;
+        row.folderJobTitle = ctx.jobTitle;
         row.folderCategory = ctx.category;
         row.status = status;
         long id = filesDao.insertIfAbsent(conn, row);
@@ -318,10 +325,10 @@ public class Ingestor {
     // ------------------------------------------------------------------ helpers
 
     /** Stores bytes that only exist inside an archive or email, named by content hash. */
-    private static File saveBlob(byte[] data, String sha, String name) throws IOException {
-        Config.BLOB_DIR.mkdirs();
+    private File saveBlob(byte[] data, String sha, String name) throws IOException {
+        blobDir.mkdirs();
         String ext = extension(name);
-        File f = new File(Config.BLOB_DIR, sha + (ext == null ? "" : Text.truncate(ext, 8)));
+        File f = new File(blobDir, sha + (ext == null ? "" : Text.truncate(ext, 8)));
         if (!f.exists()) {
             Files.write(f.toPath(), data);
         }
@@ -338,32 +345,4 @@ public class Ingestor {
         int dot = name.lastIndexOf('.');   // like Python's Path.suffix: ".gitignore" has none
         return dot > 0 && dot < name.length() - 1 ? name.substring(dot).toLowerCase() : null;
     }
-
-    /** Customer / job / category read from the folder a file sits in. */
-    public static class FolderContext {
-        public String area;
-        public String company;
-        public String job;
-        public String category;
-
-        static FolderContext of(String rel) {
-            String[] parts = rel.split(Pattern.quote(MEMBER_SEP))[0].split("/");
-            FolderContext ctx = new FolderContext();
-            ctx.area = parts.length > 1 ? parts[0] : null;
-            if (parts[0].equals("Customers") && parts.length > 2) {
-                ctx.company = parts[1];
-                Matcher m = JOB_DIR.matcher(parts[2]);
-                if (parts.length > 3 && m.matches()) {
-                    ctx.job = parts[2];
-                    if (parts.length > 4) {
-                        ctx.category = parts[3];
-                    }
-                }
-            } else if (parts.length > 2) {
-                ctx.category = parts[1];
-            }
-            return ctx;
-        }
-    }
-
 }

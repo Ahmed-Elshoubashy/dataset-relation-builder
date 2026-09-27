@@ -13,6 +13,8 @@ services:
       ERKG_DATA_ROOT: ${DATASET:-${DATASETS_DIR:-${HOME}}}
       # optional; otherwise enter the key in the "Analyse dataset" dialog
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # optional dataset profile, e.g. /opt/app/profiles/john-doe.json (see README "Other datasets")
+      ERKG_PROFILE: ${ERKG_PROFILE:-}
     volumes:
       # mounted read-only at the SAME path it has on the laptop, so the picker shows real paths
       - ${DATASETS_DIR:-${HOME}}:${DATASETS_DIR:-${HOME}}:ro

@@ -9,7 +9,7 @@ public enum EntityType {
     COMPANY("company"),
     /** Someone named in a document: signatory, recipient, author, attendee, ... */
     PERSON("person"),
-    /** A job, usually identified by a JOB-yyyy-nnnn code. */
+    /** A job or project, usually identified by a job id (its format comes from the dataset's profile). */
     PROJECT("project"),
     /** A file's own document (invoice, letter, e-mail, ...) or one it references by number. */
     DOCUMENT("document"),

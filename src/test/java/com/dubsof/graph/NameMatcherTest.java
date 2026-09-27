@@ -7,11 +7,14 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Every variant below was observed in the john-doe dataset. */
 class NameMatcherTest {
+
+    private static final NameMatcher NAMES = TestGraph.JOHN_DOE.names;
 
     private static final String[] CUSTOMERS = {
         "Acme Corporation", "Ashcombe Confectionery Ltd", "Blenheim Foods Group Ltd", "Castlemead Logistics Ltd",
@@ -24,7 +27,7 @@ class NameMatcherTest {
     private static Object[] best(String name, boolean truncated) {
         Object[] best = null;
         for (String c : CUSTOMERS) {
-            Match m = NameMatcher.matchCompany(name, c, truncated);
+            Match m = NAMES.matchCompany(name, c, truncated);
             if (m != null && (best == null || m.score > (Double) best[2])) {
                 best = new Object[] {c, m.methodName(), m.score};
             }
@@ -79,7 +82,7 @@ class NameMatcherTest {
     void emailDomains(String domain, String expected) {
         String found = null;
         for (String c : CUSTOMERS) {
-            if (NameMatcher.matchDomain(domain, c) != null) {
+            if (NAMES.matchDomain(domain, c) != null) {
                 found = c;
             }
         }
@@ -89,7 +92,7 @@ class NameMatcherTest {
     @Test
     void genericDomainMatchesNothing() {
         for (String c : CUSTOMERS) {
-            assertNull(NameMatcher.matchDomain("gmail.com", c));
+            assertNull(NAMES.matchDomain("gmail.com", c));
         }
     }
 
@@ -107,5 +110,19 @@ class NameMatcherTest {
     void oneLetterPrefixNeedsTruncationFlag() {
         Object[] b = best("Falcon Aerospace C", false);
         assertTrue(b == null || (Double) b[2] < 0.8);
+    }
+
+    @Test
+    void accentsAndUmlautsCompareEqualToTheirPlainSpelling() {
+        assertEquals(NameMatcher.personKey("Jose Mueller"), NameMatcher.personKey("José Müller"));
+        assertEquals(NAMES.companyKey("Mueller GmbH"), NAMES.companyKey("Müller GmbH"));
+        assertEquals("normalized", NAMES.matchCompany("Mueller GmbH", "Müller GmbH", false).methodName());
+        assertNotNull(NAMES.matchDomain("mueller-gmbh.de", "Müller GmbH"));
+    }
+
+    @Test
+    void companyNamesInRunningText() {
+        assertEquals(java.util.Arrays.asList("Mueller GmbH", "Harbor Robotics Inc"), NAMES.findCompanyNames(
+                "Spoke with José Müller from Mueller GmbH. Harbor Robotics Inc will quote the upgrade."));
     }
 }

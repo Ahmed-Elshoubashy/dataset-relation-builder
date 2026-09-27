@@ -12,7 +12,7 @@ public enum MentionRole {
 
     /** The file's own document. */
     SELF,
-    /** Company or project from the folder path (Customers/&lt;company&gt;/JOB-.../). */
+    /** Company or project from the folder path (read with the profile's folder layout). */
     FOLDER(0),
     /** Company or product guessed from the file name ("INV-8002_Acme Corporation", "GB-40_..."). */
     FILENAME(12),
@@ -84,6 +84,13 @@ public enum MentionRole {
     SPEC_TITLE,
     /** Product in a manual's title. */
     MANUAL_TITLE,
+
+    // ---- found in free text by the general extractor (LlmParser), for files no template fully covers
+
+    /** Named in the text, as read by Claude. Weaker than any template field, so it ranks after them. */
+    LLM(14),
+    /** Named in the text, as found by the rules used without an API key (headers, signatures, legal suffixes). */
+    FREE_TEXT(15),
 
     // ---- added by the Relator
 

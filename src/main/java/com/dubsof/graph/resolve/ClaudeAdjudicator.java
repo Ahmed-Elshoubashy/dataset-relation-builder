@@ -9,6 +9,7 @@ import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.StopReason;
 import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.AdjudicationsDao;
+import com.dubsof.graph.dataset.Owner;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.util.Json;
@@ -24,8 +25,11 @@ public class ClaudeAdjudicator implements Adjudicator {
     private final AnthropicClient client = AnthropicOkHttpClient.fromEnv();
     private final Connection cache;
     private final AdjudicationsDao adjudicationsDao = new AdjudicationsDao();
+    /** Whose files these are, for the question's context. */
+    private final Owner owner;
 
-    public ClaudeAdjudicator() throws Exception {
+    public ClaudeAdjudicator(Owner owner) throws Exception {
+        this.owner = owner;
         cache = Db.open(Config.OCR_CACHE_FILE, true);
         adjudicationsDao.createTable(cache);
     }
@@ -37,8 +41,9 @@ public class ClaudeAdjudicator implements Adjudicator {
             if (cached != null) {
                 return toVerdict(Json.readMap(cached));
             }
-            String question = "In a UK packaging-machinery supplier's business files, does the " + etype.value() + " name '"
-                    + mention + "' refer to the same real-world " + etype.value() + " as '" + candidate + "'? Context: " + context
+            String whose = owner.isKnown() ? "In the business files of " + owner.name : "In a company's business files";
+            String question = whose + ", does the " + etype.value() + " name '" + mention + "' refer to the same real-world "
+                    + etype.value() + " as '" + candidate + "'? Context: " + context
                     + ". Consider abbreviations, typos, spacing and legal suffixes; answer false if they could "
                     + "plausibly be different organisations.";
             MessageCreateParams params = MessageCreateParams.builder()
@@ -97,10 +102,10 @@ public class ClaudeAdjudicator implements Adjudicator {
     }
 
     /** Claude when configured and a key is available, the rules otherwise. */
-    public static Adjudicator createDefault() {
+    public static Adjudicator createDefault(Owner owner) {
         if (Config.ADJUDICATOR == AdjudicatorType.CLAUDE && Config.apiKeyFromEnv() != null) {
             try {
-                return new ClaudeAdjudicator();
+                return new ClaudeAdjudicator(owner);
                 
             } catch (Exception e) {
                 return new RuleAdjudicator();

@@ -167,6 +167,9 @@ public class AnalysisApi {
         }
         String typedKey = body.get("api_key") == null ? "" : String.valueOf(body.get("api_key")).trim();
         final String key = typedKey.isEmpty() ? null : typedKey;
+        String typedOwner = body.get("owner") == null ? "" : String.valueOf(body.get("owner")).trim();
+        final String owner = typedOwner.isEmpty() ? null : typedOwner;   // empty: detect it from the files
+        final boolean llm = Boolean.TRUE.equals(body.get("llm"));        // Claude reads unrecognised files
 
         if (!insideRoot(root.getAbsoluteFile().getCanonicalFile())) {
             throw new ApiServer.ApiException(400, "Only folders inside " + Config.BROWSE_ROOT + " are shared with the app. "
@@ -179,7 +182,7 @@ public class AnalysisApi {
         if (children == null || children.length == 0) {
             throw new ApiServer.ApiException(400, root + " is empty");
         }
-        if (backend == OcrBackend.CLAUDE) {
+        if (backend == OcrBackend.CLAUDE || llm) {
             if (key == null && Config.apiKeyFromEnv() == null) {
                 throw new ApiServer.ApiException(400, "Enter an Anthropic API key to use Claude.");
             }
@@ -207,7 +210,7 @@ public class AnalysisApi {
         }
         Thread worker = new Thread(new Runnable() {
             public void run() {
-                runAnalysis(root, backend, key);
+                runAnalysis(root, backend, key, owner, llm);
             }
         }, "analysis");
         worker.setDaemon(true);
@@ -215,20 +218,27 @@ public class AnalysisApi {
         return status();
     }
 
-    private void runAnalysis(File root, OcrBackend backend, String key) {
+    private void runAnalysis(File root, OcrBackend backend, String key, String owner, boolean llm) {
         Progress progress = new Progress() {
             public void update(int step, String stage, String detail) {
                 progress(step, stage, detail);
             }
         };
         try {
-            Pipeline.Result out = Pipeline.build(root, Config.DB_FILE, backend, key, progress);
+            Pipeline.Options options = new Pipeline.Options();
+            options.ocr = backend;
+            options.apiKey = key;
+            options.owner = owner;
+            options.llmExtraction = llm;
+            Pipeline.Result out = Pipeline.build(root, Config.DB_FILE, options, progress);
             progress(5, "relate", "Loading the new graph");
             server.installGraph(out.built);
             synchronized (this) {
                 result = new LinkedHashMap<String, Object>();
                 result.put("entities", out.entities);
                 result.put("read", out.read);
+                result.put("owner", out.owner.name);
+                result.put("owner_domain", out.owner.domain);
                 state = "done";
             }
             progress(5, "relate", "Analysis complete");

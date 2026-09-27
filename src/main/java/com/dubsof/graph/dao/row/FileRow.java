@@ -19,7 +19,10 @@ public class FileRow {
     public FileKind kind;
     public String area;
     public String folderCompany;
+    /** The project folder's name, its project id (or title) and its title; null when the layout names none. */
     public String folderJob;
+    public String folderJobId;
+    public String folderJobTitle;
     public String folderCategory;
     public FileStatus status;
     /** How the text was read, or null while unread. */

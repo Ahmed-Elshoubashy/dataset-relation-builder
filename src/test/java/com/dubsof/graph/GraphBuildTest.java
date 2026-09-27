@@ -65,7 +65,7 @@ class GraphBuildTest {
         TestGraph.addFile(conn, JOB + "INV-8034_v2.pdf", FileKind.PDF, INVOICE);
         TestGraph.addFile(conn, "Admin/Mail/re_schedule.eml", FileKind.EML, EMAIL);
         TestGraph.addFile(conn, "Admin/Notes/random_note.txt", FileKind.TEXT, "Nothing to see here.");
-        TestGraph.buildGraph(conn);
+        TestGraph.buildGraph(conn, TestGraph.JOHN_DOE);
     }
 
     @AfterAll

@@ -17,7 +17,8 @@ public class FilesDao {
 
     private static final String INSERT_IF_ABSENT =
             "INSERT OR IGNORE INTO files (path, parent_id, blob_path, sha256, size, ext, kind,"
-                    + " area, folder_company, folder_job, folder_category, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)";
+                    + " area, folder_company, folder_job, folder_job_id, folder_job_title, folder_category, status)"
+                    + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
     private static final String MARK_DUPLICATES =
             "UPDATE files SET duplicate_of = (SELECT MIN(f2.id) FROM files f2 WHERE f2.sha256 = files.sha256)"
                     + " WHERE id != (SELECT MIN(f2.id) FROM files f2 WHERE f2.sha256 = files.sha256)";
@@ -44,7 +45,7 @@ public class FilesDao {
     /** Adds a file unless its path is already recorded. Returns the new id, or 0 when it was already there. */
     public long insertIfAbsent(Connection conn, FileRow f) throws SQLException {
         return Db.insert(conn, INSERT_IF_ABSENT, f.path, f.parentId, f.blobPath, f.sha256, f.size, f.ext, f.kind.value(),
-                f.area, f.folderCompany, f.folderJob, f.folderCategory, f.status.value());
+                f.area, f.folderCompany, f.folderJob, f.folderJobId, f.folderJobTitle, f.folderCategory, f.status.value());
     }
 
     /** Points every byte-identical copy at the first file with the same content. */
@@ -125,6 +126,8 @@ public class FilesDao {
         f.area = rs.getString("area");
         f.folderCompany = rs.getString("folder_company");
         f.folderJob = rs.getString("folder_job");
+        f.folderJobId = rs.getString("folder_job_id");
+        f.folderJobTitle = rs.getString("folder_job_title");
         f.folderCategory = rs.getString("folder_category");
         f.status = FileStatus.fromValue(rs.getString("status"));
         f.textSource = TextSource.fromValue(rs.getString("text_source"));

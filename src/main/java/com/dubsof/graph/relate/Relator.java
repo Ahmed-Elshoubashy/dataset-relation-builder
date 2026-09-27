@@ -1,6 +1,5 @@
 package com.dubsof.graph.relate;
 
-import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.AliasesDao;
 import com.dubsof.graph.dao.EntitiesDao;
 import com.dubsof.graph.dao.FactsDao;
@@ -12,12 +11,12 @@ import com.dubsof.graph.dao.row.EntityFactRow;
 import com.dubsof.graph.dao.row.EntityRow;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.dao.row.MentionRow;
+import com.dubsof.graph.dataset.Dataset;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.FileStatus;
-import com.dubsof.graph.resolve.NameMatcher;
 
 import java.sql.Connection;
 import java.util.ArrayList;
@@ -62,6 +61,7 @@ public class Relator {
     private final FilesDao filesDao = new FilesDao();
 
     private final Connection conn;
+    private final Dataset dataset;
 
     /** One link between two entities: "src REL dst". Used as a map key, so it has equals/hashCode. */
     private static class EntityLink {
@@ -115,12 +115,13 @@ public class Relator {
         }
     }
 
-    public Relator(Connection conn) {
+    public Relator(Connection conn, Dataset dataset) {
         this.conn = conn;
+        this.dataset = dataset;
     }
 
-    public static Map<String, Integer> run(Connection conn) throws Exception {
-        return new Relator(conn).relate();
+    public static Map<String, Integer> run(Connection conn, Dataset dataset) throws Exception {
+        return new Relator(conn, dataset).relate();
     }
 
     /** Runs the five steps and returns the stage's summary (relations, gazetteer mentions, pruned documents). */
@@ -243,7 +244,7 @@ public class Relator {
      */
     private Map<String, NamedEntity> searchableNames() throws Exception {
         Map<String, Set<NamedEntity>> entitiesByName = new HashMap<>();
-        String ownerKey = NameMatcher.companyKey(Config.ownerName);
+        String ownerKey = dataset.owner.isKnown() ? dataset.names.companyKey(dataset.owner.name) : "";
         for (AliasRow alias : aliasesDao.findSearchable(conn, MIN_GAZETTEER_ALIAS, ownerKey)) {
             if (!entitiesByName.containsKey(alias.alias)) {
                 entitiesByName.put(alias.alias, new HashSet<>());

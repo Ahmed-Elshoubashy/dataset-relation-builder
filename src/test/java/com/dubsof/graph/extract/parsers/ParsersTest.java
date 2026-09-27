@@ -2,6 +2,7 @@ package com.dubsof.graph.extract.parsers;
 
 import com.dubsof.graph.TestGraph;
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.dataset.Dataset;
 import com.dubsof.graph.extract.Extraction;
 import com.dubsof.graph.ingest.FileKind;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,7 @@ class ParsersTest {
         assertEquals("INV-8034", ex.docMention().attrs.get("key"));
         assertEquals(2400.0, ex.docMention().attrs.get("total"));
         assertEquals(2000.0, ex.docMention().attrs.get("subtotal"));
+        assertEquals("GBP", ex.docMention().attrs.get("currency"));
         assertEquals(1, ((List<?>) ex.docMention().attrs.get("line_items")).size());
         assertEquals("240 Priory Lane", mention(ex, "ACME Corp").attrs.get("address"));
         List<String> facts = facts(ex);
@@ -77,7 +79,8 @@ class ParsersTest {
         String text = "Meridian Packaging Systems Ltd\n12 Mar 2024\nAcme Corporation\n240 Priory Lane\n"
                 + "Re: Site access · Shrink Wrap Retrofit\nDear Thomas,\nPlease confirm the dates.\nKind regards,\n"
                 + "Jane Smith\nProject Manager, Meridian Packaging Systems Ltd\n";
-        Extraction ex = parse(new LetterParser(), "Customers/Acme Corporation/Letters/letter_014.docx", FileKind.DOCX, text);
+        Extraction ex = parse(new LetterParser(), "Customers/Acme Corporation/Letters/letter_014.docx", FileKind.DOCX, text,
+                TestGraph.JOHN_DOE);
         assertEquals("LETTER-014", ex.docMention().attrs.get("key"));
         List<String> facts = facts(ex);
         assertTrue(facts.contains("LETTER-014 ADDRESSED_TO Acme Corporation"));
@@ -105,7 +108,7 @@ class ParsersTest {
         String text = "Customer Portal Dashboard\nJob Code | Customer | Status | Value\n"
                 + "JOB-2023-0579 | Kingsley Textiles Ltd | Awaiting Parts | £35,235\n"
                 + "JOB-2025-0645 | Blenheim Foods Group | In Progress | £45,523\n";
-        Extraction ex = parse(new ScreenshotTableParser(), "Admin/Scans/site_photo.png", FileKind.PNG, text);
+        Extraction ex = parse(new ScreenshotTableParser(), "Admin/Scans/site_photo.png", FileKind.PNG, text, TestGraph.JOHN_DOE);
         List<String> facts = facts(ex);
         assertTrue(facts.contains("Kingsley Textiles Ltd HAS_PROJECT JOB-2023-0579"));
         assertTrue(facts.contains("Blenheim Foods Group HAS_PROJECT JOB-2025-0645"));
@@ -113,7 +116,11 @@ class ParsersTest {
     }
 
     private static Extraction parse(Parser parser, String path, FileKind kind, String text) {
-        Extraction ex = new Extraction(1);
+        return parse(parser, path, kind, text, Dataset.unknown());
+    }
+
+    private static Extraction parse(Parser parser, String path, FileKind kind, String text, Dataset dataset) {
+        Extraction ex = new Extraction(1, dataset);
         FileRow row = TestGraph.row(path, kind, text);
         assertTrue(parser.parse(ex, row, text, null, null), parser.getClass().getSimpleName() + " should recognise its template");
         return ex;

@@ -1,6 +1,5 @@
 package com.dubsof.graph.extract.parsers;
 
-import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.Extraction;
@@ -8,6 +7,9 @@ import com.dubsof.graph.extract.MentionRole;
 import com.dubsof.graph.extract.RelationType;
 import com.dubsof.graph.ingest.Ingestor;
 
+import javax.mail.internet.AddressException;
+import javax.mail.internet.InternetAddress;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,7 +21,6 @@ public final class ParserUtils {
 
     public static final String DATE = "\\d{1,2} [A-Z][a-z]{2} \\d{4}";
     public static final Pattern DOC_NO = Pattern.compile("\\b(INV|QUO|PO|DN|DWG|CAL|SPEC|DS|ISO)-(\\d{3,6})\\b");
-    public static final Pattern JOB_ID = Pattern.compile("\\bJOB-\\d{4}-\\d{4}\\b");
     /** Equipment/part codes like HL-6200, VFD-15, SM-750 (document-number prefixes excluded). */
     public static final Pattern PRODUCT_CODE = Pattern.compile("\\b(?!(?:INV|QUO|PO|DN|DWG|CAL|SPEC|DS|ISO|JOB|SN)-)([A-Z]{2,4}-\\d{2,4})\\b");
     /** Document-number prefix -> document type. */
@@ -69,8 +70,9 @@ public final class ParserUtils {
             }
             ex.fact(ex.doc, RelationType.REFERENCES, ex.addMentionWithConfidence(EntityType.DOCUMENT, key, MentionRole.REFERENCE, 0.9, "key", key, "doc_type", PREFIX_TYPES.get(prefix)));
         }
-        Matcher j = JOB_ID.matcher(text);
-        while (j.find()) {
+        Pattern jobIdPattern = ex.dataset.profile.jobIdPattern;   // null: this dataset has no job ids
+        Matcher j = jobIdPattern == null ? null : jobIdPattern.matcher(text);
+        while (j != null && j.find()) {
             ex.fact(ex.addMentionWithConfidence(EntityType.PROJECT, j.group(), MentionRole.REFERENCE, 0.9, "job_id", j.group()), RelationType.HAS_DOCUMENT, ex.doc);
         }
     }
@@ -100,8 +102,12 @@ public final class ParserUtils {
         return p;
     }
 
+    /** The owner, as the employer of staff on documents it generates; null when the dataset has no known owner. */
     public static Integer owner(Extraction ex) {
-        return ex.addMentionWithConfidence(EntityType.COMPANY, Config.ownerName, MentionRole.IMPLIED_OWNER, 0.8);
+        if (!ex.dataset.owner.isKnown()) {
+            return null;
+        }
+        return ex.addMentionWithConfidence(EntityType.COMPANY, ex.dataset.owner.name, MentionRole.IMPLIED_OWNER, 0.8);
     }
 
     public static Integer companyFromDomain(Extraction ex, String addr) {
@@ -114,7 +120,8 @@ public final class ParserUtils {
             return null;
         }
         String n = name.trim().replaceFirst("(?i)^(Mr|Mrs|Ms|Miss|Dr)\\.?\\s+", "").replaceFirst("[_\\s]+$", "");
-        return n.matches("^[A-Z][A-Za-z'’-]*\\.?(?: [A-Z][A-Za-z'’-]*\\.?){1,3}$") ? n : null;
+        // two to four capitalised words, in any alphabet ("José Müller", "Zoë O'Neill")
+        return n.matches("^\\p{Lu}[\\p{L}\\p{M}'’-]*\\.?(?: \\p{Lu}[\\p{L}\\p{M}'’-]*\\.?){1,3}$") ? n : null;
     }
 
     /** File name without folder and extension. */
@@ -159,5 +166,30 @@ public final class ParserUtils {
             sb.append(parts.get(i));
         }
         return sb.toString();
+    }
+
+    /** The addresses in a From / To / Cc header; none when it cannot be parsed. */
+    public static List<InternetAddress> addresses(String header) {
+        List<InternetAddress> out = new ArrayList<>();
+        if (header == null) {
+            return out;
+        }
+        try {
+            for (InternetAddress a : InternetAddress.parseHeader(header, false)) {
+                out.add(a);
+            }
+        } catch (AddressException e) {
+            // unparseable header: no people from it
+        }
+        return out;
+    }
+
+    /** "isla.patel@x.com" -> "Isla Patel" */
+    public static String nameFromAddress(String addr) {
+        List<String> words = new ArrayList<>();
+        for (String w : addr.substring(0, addr.indexOf('@')).split("\\.")) {
+            words.add(w.isEmpty() ? w : Character.toUpperCase(w.charAt(0)) + w.substring(1).toLowerCase());
+        }
+        return join(words, " ");
     }
 }

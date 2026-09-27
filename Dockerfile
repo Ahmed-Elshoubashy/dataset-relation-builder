@@ -16,6 +16,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /src/build/install/entity-grapgh-resolver /opt/app
+COPY profiles /opt/app/profiles
 
 RUN useradd --create-home app \
     && mkdir -p /app/data \

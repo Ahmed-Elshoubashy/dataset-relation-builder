@@ -1,6 +1,5 @@
 package com.dubsof.graph.resolve;
 
-import com.dubsof.graph.Config;
 import com.dubsof.graph.dao.AliasesDao;
 import com.dubsof.graph.dao.EntitiesDao;
 import com.dubsof.graph.dao.FactsDao;
@@ -10,6 +9,8 @@ import com.dubsof.graph.dao.row.EntityRow;
 import com.dubsof.graph.dao.row.FactRow;
 import com.dubsof.graph.dao.row.FileRow;
 import com.dubsof.graph.dao.row.MentionRow;
+import com.dubsof.graph.dataset.Dataset;
+import com.dubsof.graph.dataset.Owner;
 import com.dubsof.graph.db.Db;
 import com.dubsof.graph.extract.EntityType;
 import com.dubsof.graph.extract.MentionRole;
@@ -71,6 +72,8 @@ public class Resolver {
 
     private final Connection conn;
     private final Adjudicator adjudicator;
+    private final Dataset dataset;
+    private final NameMatcher names;
 
     /** Every mention by id. Resolving changes these rows in memory; saveResolutions() writes them back. */
     private final Map<Long, MentionRow> mentionsById = new LinkedHashMap<>();
@@ -79,6 +82,7 @@ public class Resolver {
     private final Map<String, Integer> methodCounts = new TreeMap<>();
     /** The owner and the customer-folder companies: certain, so they win ties when matching. */
     private final Set<Long> anchorCompanyIds = new HashSet<>();
+    /** The owner company's entity id; 0 (no entity has it) when the dataset has no known owner. */
     private long ownerCompanyId;
 
     /** One possible company for a mention: which company, how well it matched and by which rule. */
@@ -133,9 +137,11 @@ public class Resolver {
         }
     }
 
-    public Resolver(Connection conn, Adjudicator adjudicator) throws Exception {
+    public Resolver(Connection conn, Adjudicator adjudicator, Dataset dataset) throws Exception {
         this.conn = conn;
         this.adjudicator = adjudicator;
+        this.dataset = dataset;
+        this.names = dataset.names;
         for (MentionRow mention : mentionsDao.findAll(conn)) {
             mentionsById.put(mention.id, mention);
         }
@@ -144,8 +150,8 @@ public class Resolver {
         }
     }
 
-    public static Map<String, Integer> run(Connection conn) throws Exception {
-        return new Resolver(conn, ClaudeAdjudicator.createDefault()).run();
+    public static Map<String, Integer> run(Connection conn, Dataset dataset) throws Exception {
+        return new Resolver(conn, ClaudeAdjudicator.createDefault(dataset.owner), dataset).run();
     }
 
     public Map<String, Integer> run() throws Exception {
@@ -169,11 +175,14 @@ public class Resolver {
         // id -> name of every company known so far; each mention is compared against all of them
         Map<Long, String> knownCompanies = new LinkedHashMap<>();
 
-        // 1. The owner of the file share (detected from letterheads and e-mail senders).
-        ownerCompanyId = findOrCreateEntity(EntityType.COMPANY, NameMatcher.companyKey(Config.ownerName), Config.ownerName,
-                attributes("role", "owner", "domain", Config.ownerDomain));
-        knownCompanies.put(ownerCompanyId, Config.ownerName);
-        anchorCompanyIds.add(ownerCompanyId);
+        // 1. The owner of the file share (detected from letterheads and e-mail senders), if there is one.
+        Owner owner = dataset.owner;
+        if (owner.isKnown()) {
+            ownerCompanyId = findOrCreateEntity(EntityType.COMPANY, names.companyKey(owner.name), owner.name,
+                    attributes("role", "owner", "domain", owner.domain));
+            knownCompanies.put(ownerCompanyId, owner.name);
+            anchorCompanyIds.add(ownerCompanyId);
+        }
 
         // Most trustworthy role first (folder, bill_to, ..., filename, email_domain), so a good spelling
         // creates each company before weaker ones are matched against it. The sort is stable: mentions
@@ -181,10 +190,10 @@ public class Resolver {
         List<MentionRow> companyMentions = mentionsOfType(EntityType.COMPANY);
         companyMentions.sort(Comparator.comparingInt(mention -> mention.role.companyRank()));
 
-        // 2. Customer folder names (Customers/<name>/): typed by a person, so they are always right.
+        // 2. Customer folder names (from the profile's folder layout): typed by a person, so they are always right.
         for (MentionRow mention : companyMentions) {
             if (mention.role == MentionRole.FOLDER) {
-                long companyId = findOrCreateEntity(EntityType.COMPANY, NameMatcher.companyKey(mention.surface), mention.surface,
+                long companyId = findOrCreateEntity(EntityType.COMPANY, names.companyKey(mention.surface), mention.surface,
                         attributes("role", "customer"));
                 knownCompanies.put(companyId, mention.surface);
                 anchorCompanyIds.add(companyId);
@@ -198,7 +207,7 @@ public class Resolver {
             boolean isDomain = mention.role == MentionRole.EMAIL_DOMAIN;
 
             // gmail.com, outlook.com, ...: a free e-mail provider says nothing about someone's employer
-            if (isDomain && NameMatcher.GENERIC_DOMAINS.contains(mention.surface.toLowerCase())) {
+            if (isDomain && names.isGenericDomain(mention.surface)) {
                 assignEntity(mention, null, "generic_domain", 0);
                 continue;
             }
@@ -227,8 +236,8 @@ public class Resolver {
         
         List<CompanyCandidate> candidates = new ArrayList<>();
         for (Map.Entry<Long, String> known : knownCompanies.entrySet()) {
-            Match match = isDomain ? NameMatcher.matchDomain(mention.surface, known.getValue())
-                    : NameMatcher.matchCompany(mention.surface, known.getValue(), truncated);
+            Match match = isDomain ? names.matchDomain(mention.surface, known.getValue())
+                    : names.matchCompany(mention.surface, known.getValue(), truncated);
             if (match != null) {
                 candidates.add(new CompanyCandidate(known.getKey(), match.score, match.methodName()));
             }
@@ -262,7 +271,7 @@ public class Resolver {
         // No match: a new organisation (supplier, certification body, unknown customer, ...).
         // It is added to knownCompanies, so later mentions can match it.
         String name = isDomain ? mention.surface.toLowerCase() : mention.surface;
-        String key = isDomain ? "domain:" + name : NameMatcher.companyKey(name);
+        String key = isDomain ? "domain:" + name : names.companyKey(name);
         long companyId = findOrCreateEntity(EntityType.COMPANY, key, name, isDomain ? attributes("domain", name) : null);
         knownCompanies.put(companyId, name);
         return new CompanyDecision(companyId, "new", 1.0);
@@ -271,7 +280,7 @@ public class Resolver {
     // ================================================================ projects
 
     /**
-     * Gives every project mention its project. A JOB code (JOB-2023-0003) identifies a project exactly;
+     * Gives every project mention its project. A job id (from the profile's format) identifies a project exactly;
      * a title alone ("Job: Shrink Wrap Retrofit") is matched to a folder project using the customer as context.
      */
     private void resolveProjects() throws Exception {
@@ -333,7 +342,7 @@ public class Resolver {
 
         // Step 2: mentions with only a title. Several customers can have a project with the same title,
         // so the customer the document names, or the folder the file sits in, picks the right one.
-        Map<Long, Long> folderProjectOfFile = new HashMap<>();   // file id -> project of its JOB folder
+        Map<Long, Long> folderProjectOfFile = new HashMap<>();   // file id -> project of its job folder
         for (MentionRow mention : mentionsOfType(EntityType.PROJECT)) {
             if (mention.role == MentionRole.FOLDER) {
                 folderProjectOfFile.put(mention.fileId, mention.entityId);

@@ -108,6 +108,12 @@
           </div>
         </div>
 
+        <div class="an-field">
+          <label class="an-label" for="an-owner">Owner organisation <span class="an-optional">optional</span></label>
+          <input id="an-owner" name="owner" type="text" spellcheck="false" autocomplete="off" placeholder="Detected from the files">
+          <p class="an-hint">Whose files these are. Leave empty to detect it from letterheads, signatures and sender addresses.</p>
+        </div>
+
         <fieldset class="an-field">
           <legend class="an-label">Scanned documents and screenshots</legend>
           <div class="choices">
@@ -128,6 +134,11 @@
               <span class="c-desc">Most complete, including line items. Image-only files are sent to Anthropic and billed per page.</span>
             </label>
           </div>
+          <label class="an-check">
+            <input type="checkbox" id="an-llm">
+            <span>Also let Claude read the files no template recognises (letters, notes, e-mail bodies).
+              Without it, simple rules read them: signatures, addresses and company names. Billed per file, cached by content.</span>
+          </label>
           <div class="an-key" id="an-key-wrap" hidden>
             <label class="an-label" for="an-key">Anthropic API key</label>
             <input id="an-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">

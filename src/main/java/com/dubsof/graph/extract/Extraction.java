@@ -1,5 +1,6 @@
 package com.dubsof.graph.extract;
 
+import com.dubsof.graph.dataset.Dataset;
 import com.dubsof.graph.util.Text;
 
 import java.util.ArrayList;
@@ -48,8 +49,17 @@ public class Extraction {
     /** Index of this file's own document mention. */
     public Integer doc;
 
-    public Extraction(long fileId) {
+    /** The dataset being analysed: parsers read the owner from it. */
+    public final Dataset dataset;
+
+    public Extraction(long fileId, Dataset dataset) {
         this.fileId = fileId;
+        this.dataset = dataset;
+    }
+
+    /** An extraction for a dataset with no known owner. */
+    public Extraction(long fileId) {
+        this(fileId, Dataset.unknown());
     }
 
     /**
