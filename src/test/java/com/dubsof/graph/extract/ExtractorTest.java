@@ -2,6 +2,10 @@ package com.dubsof.graph.extract;
 
 import com.dubsof.graph.TestGraph;
 import com.dubsof.graph.dao.row.FileRow;
+import com.dubsof.graph.dataset.Dataset;
+import com.dubsof.graph.extract.parsers.BusinessDocParser;
+import com.dubsof.graph.extract.parsers.LlmParser;
+import com.dubsof.graph.extract.parsers.Parser;
 import com.dubsof.graph.ingest.FileKind;
 import org.junit.jupiter.api.Test;
 
@@ -119,5 +123,32 @@ class ExtractorTest {
             out.add(ex.mentions.get(f.src).surface + " " + f.rel.value() + " " + ex.mentions.get(f.dst).surface);
         }
         return out;
+    }
+
+    @Test
+    void ocrNoiseDoesNotStopExtraction() {
+        // meme.png, as Tesseract read it: the first line is a table border
+        FileRow row = TestGraph.row("Customers/Falcon Aerospace Components Ltd/JOB-2024-0028 Site Relocation Project/Invoices/meme.png",
+                FileKind.PNG, "|\nWHEN THE PLC\nFINALLY TALKS TO THE HMI\n");
+        Extraction ex = extractor.extractFile(row);
+        assertTrue(ex.doc != null, "the file still gets its document");
+        assertEquals(0, extractor.parserErrors());
+    }
+
+    @Test
+    void aParserThatFailsIsSkippedAndItsHalfDoneWorkUndone() {
+        // a parser that adds a mention, then throws: the next parser still reads the file
+        Parser broken = new Parser() {
+            public boolean parse(Extraction ex, FileRow row, String text, Integer folderCompany, Integer project) {
+                ex.addMention(EntityType.COMPANY, "Half Done Ltd", MentionRole.BILL_TO);
+                throw new IllegalStateException("boom");
+            }
+        };
+        Extractor withBroken = new Extractor(Dataset.unknown(), new LlmParser(), broken, new BusinessDocParser());
+        Extraction ex = withBroken.extractFile(TestGraph.row("Sales/INV-8034_Acme Corporation.pdf", FileKind.PDF, INV_8034));
+
+        assertEquals(1, withBroken.parserErrors());
+        assertTrue(mentions(ex).contains("document INV-8034 (self)"), "BusinessDocParser read the invoice: " + mentions(ex));
+        assertTrue(mentions(ex).stream().noneMatch(m -> m.contains("Half Done")), "the broken parser's mention is gone: " + mentions(ex));
     }
 }

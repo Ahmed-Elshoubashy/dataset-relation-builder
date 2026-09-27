@@ -27,6 +27,15 @@ public final class Text {
         return out;
     }
 
+    /**
+     * The part of {@code s} before the first {@code separator} match: "Item | Qty" -> "Item". Never fails: a line made
+     * only of separators ("|", which OCR reads from table borders) gives "", where split(...)[0] would throw.
+     */
+    public static String firstField(String s, String separator) {
+        String[] fields = s.split(separator);
+        return fields.length == 0 ? "" : fields[0];
+    }
+
     public static boolean isBlank(String s) {
         return s == null || s.trim().isEmpty();
     }

@@ -68,7 +68,7 @@ public class LetterParser implements Parser {
             if (SIGNOFF.matcher(lines.get(i)).matches() && i + 1 < lines.size()) {
                 boolean namesOwner = ownerFirstWord != null && i + 2 < lines.size() && lines.get(i + 2).contains(ownerFirstWord);
                 Integer org = namesOwner ? owner(ex) : null;
-                String jobTitle = i + 2 < lines.size() ? lines.get(i + 2).split(",")[0] : null;
+                String jobTitle = i + 2 < lines.size() ? Text.firstField(lines.get(i + 2), ",") : null;
                 ex.fact(personWithOrg(ex, lines.get(i + 1), MentionRole.SIGNATORY, org, "job_title", jobTitle), RelationType.AUTHORED, doc);
             }
         }

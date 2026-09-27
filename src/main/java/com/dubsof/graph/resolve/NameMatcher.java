@@ -358,7 +358,7 @@ public final class NameMatcher {
      * skipped. 'ironbridgeauto.co.uk' ~ 'Ironbridge Automotive Ltd' ("ironbridge" + "auto").
      */
     public Match matchDomain(String domain, String candidate) {
-        String label = domain.toLowerCase().split("\\.")[0].replaceAll("[^a-z0-9]", "");
+        String label = Text.firstField(domain.toLowerCase(), "\\.").replaceAll("[^a-z0-9]", "");
         List<String> candidateWords = companyWords(candidate, true);
         if (label.isEmpty() || candidateWords.isEmpty() || !label.startsWith(candidateWords.get(0))) {
             return null;

@@ -77,32 +77,51 @@ public class Extractor {
     private final FactsDao factsDao = new FactsDao();
 
     /** One parser per document template, tried in this order; the first that recognises the file wins. */
-    private final Parser[] parsers = {
-        new EmailParser(),
-        new VcardParser(),
-        new CalendarParser(),
-        new BusinessDocParser(),
-        new DrawingParser(),
-        new CalibrationParser(),
-        new SpecParser(),
-        new ManualParser(),
-        new CertificateParser(),
-        new LetterParser(),
-        new ContractParser(),
-        new ReportParser(),
-        new ServiceReportParser(),
-        new MeetingNotesParser(),
-        new ItemListParser(),
-        new ScreenshotTableParser(),
-    };
+    private final Parser[] parsers;
+
+    private static Parser[] templateParsers() {
+        return new Parser[] {
+            new EmailParser(),
+            new VcardParser(),
+            new CalendarParser(),
+            new BusinessDocParser(),
+            new DrawingParser(),
+            new CalibrationParser(),
+            new SpecParser(),
+            new ManualParser(),
+            new CertificateParser(),
+            new LetterParser(),
+            new ContractParser(),
+            new ReportParser(),
+            new ServiceReportParser(),
+            new MeetingNotesParser(),
+            new ItemListParser(),
+            new ScreenshotTableParser(),
+        };
+    }
+
+    /** Files a template parser threw on (it was skipped for that file), and the first such error. */
+    private int parserErrors;
+    private String firstParserError;
 
     /** Tried after the templates: reads free text with Claude, or with rules offline. */
     private final LlmParser freeText;
 
     public Extractor(Dataset dataset, LlmParser freeText) {
+        this(dataset, freeText, templateParsers());
+    }
+
+    /** With these template parsers instead of the usual ones (tests). */
+    Extractor(Dataset dataset, LlmParser freeText, Parser... parsers) {
         this.dataset = dataset;
         this.freeText = freeText;
+        this.parsers = parsers;
         this.documentNumbers = dataset.profile.documentNumbers();
+    }
+
+    /** Files a template parser threw on, in this extractor's run (tests read it). */
+    int parserErrors() {
+        return parserErrors;
     }
 
     /** Offline: the general extractor uses its rules. */
@@ -230,11 +249,37 @@ public class Extractor {
      */
     private Parser runParsers(Extraction ex, FileRow row, String text, FolderMentions folder) {
         for (Parser parser : parsers) {
-            if (parser.parse(ex, row, text, folder.customerMention, folder.projectMention)) {
-                return parser;
+            // what the file had before this parser, to undo a parser that fails half-way
+            int mentions = ex.mentions.size();
+            int facts = ex.facts.size();
+            Integer doc = ex.doc;
+            try {
+                if (parser.parse(ex, row, text, folder.customerMention, folder.projectMention)) {
+                    return parser;
+                }
+            } catch (RuntimeException e) {
+                // one odd file (OCR noise, a damaged document) must not stop the analysis: drop what this
+                // parser added, note it, and let the next parser try
+                ex.mentions.subList(mentions, ex.mentions.size()).clear();
+                ex.facts.subList(facts, ex.facts.size()).clear();
+                ex.doc = doc;
+                parserFailed(parser, row, e);
             }
         }
         return null;
+    }
+
+    /** Counts a parser that threw on a file, and prints the first few, with the file, for the server log. */
+    private void parserFailed(Parser parser, FileRow row, RuntimeException e) {
+        parserErrors++;
+        String message = parser.getClass().getSimpleName() + " failed on " + row.path + ": " + e;
+        if (firstParserError == null) {
+            firstParserError = message;
+        }
+        if (parserErrors <= 5) {
+            System.err.println(message);
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -296,10 +341,15 @@ public class Extractor {
     /** As above, and reports failed Claude calls (a bad key, a rate limit) to the analysis log. */
     public static Map<String, Integer> run(Connection conn, Dataset dataset, String llmApiKey, Progress progress) throws Exception {
         try (LlmParser freeText = new LlmParser(llmApiKey)) {
-            Map<String, Integer> summary = new Extractor(dataset, freeText).extractAll(conn);
+            Extractor extractor = new Extractor(dataset, freeText);
+            Map<String, Integer> summary = extractor.extractAll(conn);
             String problem = freeText.claudeProblem();
             if (problem != null) {
                 progress.update(3, "extract", problem);
+            }
+            if (extractor.parserErrors > 0) {
+                progress.update(3, "extract", extractor.parserErrors + " file(s) skipped by a template parser that failed on them"
+                        + " (first: " + extractor.firstParserError + "); see the server log");
             }
             return summary;
         }
@@ -351,6 +401,9 @@ public class Extractor {
         summary.put("mentions", mentionCount);
         summary.put("facts", factCount);
         summary.put("free_text_files", freeTextFiles.size());
+        if (parserErrors > 0) {
+            summary.put("parser_errors", parserErrors);
+        }
         summary.putAll(freeText.claudeSummary());
         return summary;
     }

@@ -20,14 +20,14 @@ public class ItemListParser implements Parser {
         if (lines.isEmpty()) {
             return false;
         }
-        String first = lines.get(0).split("\\s*[|,]\\s*")[0].toLowerCase();
+        String first = Text.firstField(lines.get(0), "\\s*[|,]\\s*").toLowerCase();
         if (!first.equals("item") && !first.equals("description")) {
             return false;
         }
         String type = row.path.toLowerCase().contains("price") ? "price_list" : "item_list";
         Integer doc = document(ex, row, type, null, stem(row.path).replace("_", " "));
         for (String l : lines.subList(1, lines.size())) {
-            String cell = l.split("\\s*[|,]\\s*")[0];
+            String cell = Text.firstField(l, "\\s*[|,]\\s*");
             String code = ex.documentNumbers.productCode(cell);
             if (code != null) {
                 ex.fact(doc, RelationType.LISTS_PRODUCT, ex.addMention(EntityType.PRODUCT, cell, MentionRole.LINE_ITEM, "code", code));

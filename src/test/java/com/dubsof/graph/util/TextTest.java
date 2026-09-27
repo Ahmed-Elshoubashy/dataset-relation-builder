@@ -17,6 +17,15 @@ class TextTest {
     }
 
     @Test
+    void firstFieldNeverFailsOnALineOfSeparators() {
+        assertEquals("Item", Text.firstField("Item | Qty | Price", "\\s*[|,]\\s*"));
+        // Tesseract reads a table border as "|": split(...)[0] threw on it and stopped a whole analysis
+        assertEquals("", Text.firstField("|", "\\s*[|,]\\s*"));
+        assertEquals("", Text.firstField(", |", "\\s*[|,]\\s*"));
+        assertEquals("", Text.firstField(".", "\\."));
+    }
+
+    @Test
     void editDistanceCountsASwapAsOneEdit() {
         assertEquals(0, Text.damerauLevenshtein("blenheim", "blenheim"));
         assertEquals(1, Text.damerauLevenshtein("blenhiem", "blenheim"));   // swapped letters
